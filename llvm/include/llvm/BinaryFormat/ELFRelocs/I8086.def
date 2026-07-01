@@ -1,0 +1,12 @@
+
+#ifndef ELF_RELOC
+#error "ELF_RELOC must be defined"
+#endif
+
+ELF_RELOC(R_I8086_NONE,        0)
+ELF_RELOC(R_I8086_16,          1)
+ELF_RELOC(R_I8086_8,           2)
+ELF_RELOC(R_I8086_16_PCREL,    3)
+ELF_RELOC(R_I8086_8_PCREL,     4)
+ELF_RELOC(R_I8086_SEG16,       5)
+ELF_RELOC(R_I8086_RELSEG16,    6)

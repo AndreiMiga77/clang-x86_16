@@ -69,6 +69,7 @@ public:
     mips64,      // MIPS64: mips64, mips64r6, mipsn32, mipsn32r6
     mips64el,    // MIPS64EL: mips64el, mips64r6el, mipsn32el, mipsn32r6el
     msp430,      // MSP430: msp430
+    i8086,       // Intel 8086 (16-bit): i8086
     ppc,         // PPC: powerpc
     ppcle,       // PPCLE: powerpc (little endian)
     ppc64,       // PPC64: powerpc64, ppu

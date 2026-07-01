@@ -325,6 +325,7 @@ enum {
   EM_VE = 251,            // NEC SX-Aurora VE
   EM_CSKY = 252,          // C-SKY 32-bit processor
   EM_LOONGARCH = 258,     // LoongArch
+  EM_I8086 = 0x8086,      // Intel 8086 (non-standard, LLVM-local value)
 };
 
 // Object file classes.
@@ -1032,6 +1033,11 @@ enum {
 // ELF Relocation type for VE.
 enum {
 #include "ELFRelocs/VE.def"
+};
+
+// ELF Relocation types for Intel 8086.
+enum {
+#include "ELFRelocs/I8086.def"
 };
 
 // CSKY Specific e_flags
