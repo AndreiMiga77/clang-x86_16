@@ -21,6 +21,7 @@
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrDesc.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -181,15 +182,27 @@ void I8086MCCodeEmitter::encodeInstruction(const MCInst &MI,
   unsigned ImmType = I8086II::getImmType(TSFlags);
   uint8_t Opcode = I8086II::getOpcode(TSFlags);
 
+  // Build a logical operand list that skips any operand tied to an earlier one
+  // (the duplicated source of a two-address codegen instruction).  For the
+  // assembler, which never produces ties, this is just every operand, so the
+  // encoding is unchanged.
+  SmallVector<unsigned, 8> Ops;
+  for (unsigned I = 0, E = MI.getNumOperands(); I != E; ++I) {
+    if (Desc.getOperandConstraint(I, MCOI::TIED_TO) != -1)
+      continue;
+    Ops.push_back(I);
+  }
+  auto Reg = [&](unsigned LogicalIdx) { return regEnc(MI, Ops[LogicalIdx]); };
+
   // Work out where a memory operand (if any) starts, so we can emit a segment
   // override prefix ahead of the opcode.
   int MemOp = -1;
   switch (Form) {
-  case I8086II::MRMDestMem: MemOp = 0; break;
-  case I8086II::MRMSrcMem:  MemOp = 1; break;
+  case I8086II::MRMDestMem: MemOp = Ops[0]; break;
+  case I8086II::MRMSrcMem:  MemOp = Ops[1]; break;
   default:
     if (I8086II::isMRMGroup(Form) && !I8086II::isMRMGroupReg(Form))
-      MemOp = 0;
+      MemOp = Ops[0];
     break;
   }
   if (MemOp >= 0) {
@@ -200,47 +213,45 @@ void I8086MCCodeEmitter::encodeInstruction(const MCInst &MI,
 
   // Emit the opcode byte (AddRegFrm folds the register number into it).
   if (Form == I8086II::AddRegFrm)
-    emitByte(Opcode | (regEnc(MI, 0) & 7), CB);
+    emitByte(Opcode | (Reg(0) & 7), CB);
   else
     emitByte(Opcode, CB);
 
   // Emit ModR/M + displacement.
   switch (Form) {
   case I8086II::MRMDestReg:
-    emitByte(uint8_t(0xC0 | ((regEnc(MI, 1) & 7) << 3) | (regEnc(MI, 0) & 7)),
-             CB);
+    emitByte(uint8_t(0xC0 | ((Reg(1) & 7) << 3) | (Reg(0) & 7)), CB);
     break;
   case I8086II::MRMSrcReg:
-    emitByte(uint8_t(0xC0 | ((regEnc(MI, 0) & 7) << 3) | (regEnc(MI, 1) & 7)),
-             CB);
+    emitByte(uint8_t(0xC0 | ((Reg(0) & 7) << 3) | (Reg(1) & 7)), CB);
     break;
   case I8086II::MRMDestMem:
-    encodeMemory(MI, 0, regEnc(MI, 4), CB, Fixups);
+    encodeMemory(MI, Ops[0], Reg(4), CB, Fixups);
     break;
   case I8086II::MRMSrcMem:
-    encodeMemory(MI, 1, regEnc(MI, 0), CB, Fixups);
+    encodeMemory(MI, Ops[1], Reg(0), CB, Fixups);
     break;
   default:
     if (I8086II::isMRMGroup(Form)) {
       unsigned Ext = I8086II::getMRMExtension(Form);
       if (I8086II::isMRMGroupReg(Form))
-        emitByte(uint8_t(0xC0 | (Ext << 3) | (regEnc(MI, 0) & 7)), CB);
+        emitByte(uint8_t(0xC0 | (Ext << 3) | (Reg(0) & 7)), CB);
       else
-        encodeMemory(MI, 0, Ext, CB, Fixups);
+        encodeMemory(MI, Ops[0], Ext, CB, Fixups);
     }
     break;
   }
 
   // Far pointer: opcode + off16 + seg16 (two immediate operands).
   if (Form == I8086II::RawFrmFar) {
-    encodeImm(MI, 0, I8086II::Imm16, CB, Fixups);
-    encodeImm(MI, 1, I8086II::Imm16, CB, Fixups);
+    encodeImm(MI, Ops[0], I8086II::Imm16, CB, Fixups);
+    encodeImm(MI, Ops[1], I8086II::Imm16, CB, Fixups);
     return;
   }
 
-  // Trailing immediate (always the last operand when present).
+  // Trailing immediate (always the last logical operand when present).
   if (ImmType != I8086II::NoImm)
-    encodeImm(MI, MI.getNumOperands() - 1, ImmType, CB, Fixups);
+    encodeImm(MI, Ops.back(), ImmType, CB, Fixups);
 }
 
 MCCodeEmitter *llvm::createI8086MCCodeEmitter(const MCInstrInfo &MCII,

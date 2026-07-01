@@ -21,9 +21,3 @@ LLVMInitializeI8086TargetInfo() {
   RegisterTarget<Triple::i8086> X(getTheI8086Target(), "i8086",
                                   "Intel 8086 [experimental]", "I8086");
 }
-
-// The i8086 target is assembler-only: it has no CodeGen target machine.  The
-// generated Targets.def still emits a call to LLVMInitializeI8086Target() from
-// InitializeAllTargets(), so provide an empty stub here (in a broadly-linked
-// library) to keep tools such as llc/opt linking.
-extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeI8086Target() {}

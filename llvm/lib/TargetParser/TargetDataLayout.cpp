@@ -581,6 +581,12 @@ std::string Triple::computeDataLayout(StringRef ABIName) const {
     return computeMipsDataLayout(*this, ABIName);
   case Triple::msp430:
     return "e-m:e-p:16:16-i32:16-i64:16-f32:16-f64:16-a:8-n8:16-S16";
+  case Triple::i8086:
+    // Tiny memory model: little-endian, 16-bit near pointers, i8/i16 native.
+    // 2-byte scalars are word-aligned (i16/i32/i64:16); aggregates have a
+    // 1-byte baseline (a:8), so structs pack to their fields' alignment; the
+    // 16-bit stack is word-aligned (S16).
+    return "e-m:e-p:16:16-i32:16-i64:16-f32:16-f64:16-a:8-n8:16-S16";
   case Triple::ppc:
   case Triple::ppcle:
   case Triple::ppc64:
