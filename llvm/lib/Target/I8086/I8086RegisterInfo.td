@@ -66,6 +66,12 @@ def GR16 : RegisterClass<"I8086", [i16], 16,
 
 def SEGR : RegisterClass<"I8086", [i16], 16, (add ES, CS, SS, DS)>;
 
+// Registers usable as a ModR/M base/index on the 8086.  Only BX, BP, SI and DI
+// can address memory; BP is reserved (frame pointer) but appears here so that
+// frame-index memory operands (rewritten to BP by eliminateFrameIndex) satisfy
+// the operand's register class.
+def ADDR16 : RegisterClass<"I8086", [i16], 16, (add BX, SI, DI, BP)>;
+
 // Single-register sub-classes for instructions with fixed register operands
 // (accumulator for IN/OUT, CL for shifts, DX for variable-port IN/OUT).
 def AREG8  : RegisterClass<"I8086", [i8],  8,  (add AL)>;

@@ -47,7 +47,8 @@ def imm1 : Operand<i16> { let ParserMatchClass = Imm1AsmOperand; }
 // Memory operands.  All expand to (base:GR16, index:GR16, disp:i16imm, seg:SEGR).
 class I8086MemOperand<AsmOperandClass c> : Operand<i16> {
   let PrintMethod = "printMemReference";
-  let MIOperandInfo = (ops GR16, GR16, i16imm, SEGR);
+  // base and index must be ModR/M-addressable registers (BX/BP/SI/DI).
+  let MIOperandInfo = (ops ADDR16, ADDR16, i16imm, SEGR);
   let ParserMatchClass = c;
   let OperandType = "OPERAND_MEMORY";
 }
@@ -504,6 +505,29 @@ let isCodeGenOnly = 1, usesCustomInserter = 1, Uses = [FLAGS] in {
                              [(set GR16:$dst, (I8086selectcc GR16:$src1, GR16:$src2, imm:$cc))]>;
 }
 
+// Shift-by-CL codegen instructions (D2/D3 /digit).  Two-address; CL is an
+// implicit count.  Built by the custom inserter below.
+let isCodeGenOnly = 1, Constraints = "$src1 = $dst", Defs = [FLAGS],
+    Uses = [CL] in {
+  def SHL8CL  : I8086Inst<0xD2, MRM4r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "shl\t$dst, cl">;
+  def SHR8CL  : I8086Inst<0xD2, MRM5r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "shr\t$dst, cl">;
+  def SAR8CL  : I8086Inst<0xD2, MRM7r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "sar\t$dst, cl">;
+  def SHL16CL : I8086Inst<0xD3, MRM4r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shl\t$dst, cl">;
+  def SHR16CL : I8086Inst<0xD3, MRM5r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shr\t$dst, cl">;
+  def SAR16CL : I8086Inst<0xD3, MRM7r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "sar\t$dst, cl">;
+}
+
+// Shift pseudos: EmitInstrWithCustomInserter copies the count into CL and emits
+// the shift-by-CL instruction above.
+let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
+  def Shl8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Shl8",  [(set GR8:$dst,  (shl GR8:$src, GR8:$amt))]>;
+  def Shr8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Shr8",  [(set GR8:$dst,  (srl GR8:$src, GR8:$amt))]>;
+  def Sar8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Sar8",  [(set GR8:$dst,  (sra GR8:$src, GR8:$amt))]>;
+  def Shl16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Shl16", [(set GR16:$dst, (shl GR16:$src, GR8:$amt))]>;
+  def Shr16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Shr16", [(set GR16:$dst, (srl GR16:$src, GR8:$amt))]>;
+  def Sar16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Sar16", [(set GR16:$dst, (sra GR16:$src, GR8:$amt))]>;
+}
+
 //===----------------------------------------------------------------------===//
 // GlobalAddress / ExternalSymbol wrappers (materialize a 16-bit address).
 //===----------------------------------------------------------------------===//
@@ -511,6 +535,7 @@ let isCodeGenOnly = 1, usesCustomInserter = 1, Uses = [FLAGS] in {
 def : Pat<(i16 (I8086Wrapper tglobaladdr:$dst)),  (MOV16ri tglobaladdr:$dst)>;
 def : Pat<(i16 (I8086Wrapper texternalsym:$dst)), (MOV16ri texternalsym:$dst)>;
 def : Pat<(i16 (I8086Wrapper tblockaddress:$dst)),(MOV16ri tblockaddress:$dst)>;
+def : Pat<(i16 (I8086Wrapper tjumptable:$dst)),   (MOV16ri tjumptable:$dst)>;
 
 // Simple i16 patterns not covered by instruction patterns.
 def : Pat<(i8  (trunc GR16:$src)), (EXTRACT_SUBREG GR16:$src, sub_8bit_lo)>;

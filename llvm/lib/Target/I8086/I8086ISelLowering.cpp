@@ -44,12 +44,10 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   }
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
-  // The 8086 shifts only by 1 or CL; proper lowering is deferred (see
-  // CODEGEN_PLAN.md), for now route variable/large shifts through libcalls.
+  // The 8086 shifts only by 1 or CL.  SHL/SRL/SRA are selected via the Shl*/
+  // Shr*/Sar* custom-inserter pseudos, which move the shift count into CL and
+  // use the shift-by-CL instruction.  Rotates are expanded.
   for (MVT VT : {MVT::i8, MVT::i16}) {
-    setOperationAction(ISD::SHL, VT, LibCall);
-    setOperationAction(ISD::SRL, VT, LibCall);
-    setOperationAction(ISD::SRA, VT, LibCall);
     setOperationAction(ISD::ROTL, VT, Expand);
     setOperationAction(ISD::ROTR, VT, Expand);
     setOperationAction(ISD::CTTZ, VT, Expand);
@@ -68,6 +66,7 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::GlobalAddress, MVT::i16, Custom);
   setOperationAction(ISD::ExternalSymbol, MVT::i16, Custom);
   setOperationAction(ISD::BlockAddress, MVT::i16, Custom);
+  setOperationAction(ISD::JumpTable, MVT::i16, Custom);
   setOperationAction(ISD::BR_JT, MVT::Other, Expand);
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
@@ -102,6 +101,7 @@ SDValue I8086TargetLowering::LowerOperation(SDValue Op,
   case ISD::GlobalAddress:  return LowerGlobalAddress(Op, DAG);
   case ISD::ExternalSymbol: return LowerExternalSymbol(Op, DAG);
   case ISD::BlockAddress:   return LowerBlockAddress(Op, DAG);
+  case ISD::JumpTable:      return LowerJumpTable(Op, DAG);
   case ISD::SETCC:          return LowerSETCC(Op, DAG);
   case ISD::BR_CC:          return LowerBR_CC(Op, DAG);
   case ISD::SELECT_CC:      return LowerSELECT_CC(Op, DAG);
@@ -137,6 +137,14 @@ SDValue I8086TargetLowering::LowerBlockAddress(SDValue Op,
   const BlockAddress *BA = cast<BlockAddressSDNode>(Op)->getBlockAddress();
   EVT PtrVT = Op.getValueType();
   SDValue Result = DAG.getTargetBlockAddress(BA, PtrVT);
+  return DAG.getNode(I8086ISD::Wrapper, SDLoc(Op), PtrVT, Result);
+}
+
+SDValue I8086TargetLowering::LowerJumpTable(SDValue Op,
+                                            SelectionDAG &DAG) const {
+  JumpTableSDNode *JT = cast<JumpTableSDNode>(Op);
+  EVT PtrVT = Op.getValueType();
+  SDValue Result = DAG.getTargetJumpTable(JT->getIndex(), PtrVT);
   return DAG.getNode(I8086ISD::Wrapper, SDLoc(Op), PtrVT, Result);
 }
 
@@ -453,10 +461,36 @@ static unsigned jccOpcode(I8086CC::CondCode CC) {
   }
 }
 
+// Expand a shift pseudo to: copy the count into CL, then shift-by-CL.
+static MachineBasicBlock *emitShift(MachineInstr &MI, MachineBasicBlock *BB) {
+  const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
+  DebugLoc dl = MI.getDebugLoc();
+  unsigned ClOpc;
+  switch (MI.getOpcode()) {
+  case I8086::Shl8:  ClOpc = I8086::SHL8CL;  break;
+  case I8086::Shr8:  ClOpc = I8086::SHR8CL;  break;
+  case I8086::Sar8:  ClOpc = I8086::SAR8CL;  break;
+  case I8086::Shl16: ClOpc = I8086::SHL16CL; break;
+  case I8086::Shr16: ClOpc = I8086::SHR16CL; break;
+  case I8086::Sar16: ClOpc = I8086::SAR16CL; break;
+  default: llvm_unreachable("unexpected shift pseudo");
+  }
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::CL)
+      .addReg(MI.getOperand(2).getReg());
+  BuildMI(*BB, MI, dl, TII.get(ClOpc), MI.getOperand(0).getReg())
+      .addReg(MI.getOperand(1).getReg());
+  MI.eraseFromParent();
+  return BB;
+}
+
 MachineBasicBlock *
 I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *BB) const {
   unsigned Opc = MI.getOpcode();
+  if (Opc == I8086::Shl8 || Opc == I8086::Shr8 || Opc == I8086::Sar8 ||
+      Opc == I8086::Shl16 || Opc == I8086::Shr16 || Opc == I8086::Sar16)
+    return emitShift(MI, BB);
+
   assert((Opc == I8086::Select8 || Opc == I8086::Select16) &&
          "Unexpected instr type to insert");
   const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();

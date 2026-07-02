@@ -120,16 +120,24 @@ void I8086MCCodeEmitter::encodeMemory(const MCInst &MI, unsigned MemOp,
   MCRegister Index = MI.getOperand(MemOp + 1).getReg();
   const MCOperand &Disp = MI.getOperand(MemOp + 2);
 
+  // A single addressing register is carried in the Base slot; it may be any of
+  // BX/BP/SI/DI (selectMemAddr / the assembler put it there).  Normalize a
+  // lone SI/DI base into the Index slot so the tables below match.
+  if (!Index && (Base == I8086::SI || Base == I8086::DI)) {
+    Index = Base;
+    Base = MCRegister();
+  }
+
   unsigned RM;
   bool Direct = false;
   if (Base == I8086::BX && Index == I8086::SI) RM = 0;
   else if (Base == I8086::BX && Index == I8086::DI) RM = 1;
   else if (Base == I8086::BP && Index == I8086::SI) RM = 2;
   else if (Base == I8086::BP && Index == I8086::DI) RM = 3;
-  else if (!Base && Index == I8086::SI) RM = 4;
-  else if (!Base && Index == I8086::DI) RM = 5;
-  else if (Base == I8086::BP && !Index) RM = 6;
-  else if (Base == I8086::BX && !Index) RM = 7;
+  else if (!Base && Index == I8086::SI) RM = 4;   // [SI]
+  else if (!Base && Index == I8086::DI) RM = 5;   // [DI]
+  else if (Base == I8086::BP && !Index) RM = 6;   // [BP]
+  else if (Base == I8086::BX && !Index) RM = 7;   // [BX]
   else { RM = 6; Direct = true; } // [disp16]
 
   // Decide the mod field and displacement size.
