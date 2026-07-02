@@ -25,6 +25,7 @@
 #include "Targets/Lanai.h"
 #include "Targets/LoongArch.h"
 #include "Targets/M68k.h"
+#include "Targets/I8086.h"
 #include "Targets/MSP430.h"
 #include "Targets/Mips.h"
 #include "Targets/NVPTX.h"
@@ -276,6 +277,9 @@ std::unique_ptr<TargetInfo> AllocateTarget(const llvm::Triple &Triple,
 
   case llvm::Triple::msp430:
     return std::make_unique<MSP430TargetInfo>(Triple, Opts);
+
+  case llvm::Triple::i8086:
+    return std::make_unique<I8086TargetInfo>(Triple, Opts);
 
   case llvm::Triple::mips:
     switch (os) {
