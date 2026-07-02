@@ -22,6 +22,7 @@ extern "C" LLVM_ABI LLVM_EXTERNAL_VISIBILITY void LLVMInitializeI8086Target() {
   RegisterTargetMachine<I8086TargetMachine> X(getTheI8086Target());
   PassRegistry &PR = *PassRegistry::getPassRegistry();
   initializeI8086DAGToDAGISelLegacyPass(PR);
+  initializeI8086AsmPrinterPass(PR);
 }
 
 static Reloc::Model getEffectiveRelocModel(std::optional<Reloc::Model> RM) {

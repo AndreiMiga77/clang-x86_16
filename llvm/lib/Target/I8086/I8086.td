@@ -26,6 +26,7 @@ def : Proc<"i8086",   []>;
 //===----------------------------------------------------------------------===//
 
 include "I8086RegisterInfo.td"
+include "I8086CallingConv.td"
 include "I8086InstrInfo.td"
 
 defm : RemapAllTargetPseudoPointerOperands<GR16>;

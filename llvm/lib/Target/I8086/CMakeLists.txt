@@ -1,28 +1,45 @@
 add_llvm_component_group(I8086)
 
-# Assembler-only target: we do not call add_llvm_target (no CodeGen library),
-# so add the target root (for MCTargetDesc/TargetInfo/*.h and the generated
-# *.inc files) to the include path for all subdirectories ourselves.
-include_directories(BEFORE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-
 set(LLVM_TARGET_DEFINITIONS I8086.td)
 
 tablegen(LLVM I8086GenAsmMatcher.inc -gen-asm-matcher)
 tablegen(LLVM I8086GenAsmWriter.inc -gen-asm-writer)
+tablegen(LLVM I8086GenCallingConv.inc -gen-callingconv)
+tablegen(LLVM I8086GenDAGISel.inc -gen-dag-isel)
 tablegen(LLVM I8086GenInstrInfo.inc -gen-instr-info)
 tablegen(LLVM I8086GenRegisterInfo.inc -gen-register-info)
+tablegen(LLVM I8086GenSDNodeInfo.inc -gen-sd-node-info)
 tablegen(LLVM I8086GenSubtargetInfo.inc -gen-subtarget)
 
 add_public_tablegen_target(I8086CommonTableGen)
 
-# I8086 is assembler-only (no CodeGen library).  Provide a small top-level
-# component library so that the "I8086" component resolves for tools that link
-# LLVM targets by name (e.g. lld).
-add_llvm_component_library(LLVMI8086
+add_llvm_target(I8086CodeGen
   I8086.cpp
+  I8086AsmPrinter.cpp
+  I8086FrameLowering.cpp
+  I8086ISelDAGToDAG.cpp
+  I8086ISelLowering.cpp
+  I8086InstrInfo.cpp
+  I8086MCInstLower.cpp
+  I8086MachineFunctionInfo.cpp
+  I8086RegisterInfo.cpp
+  I8086SelectionDAGInfo.cpp
+  I8086Subtarget.cpp
+  I8086TargetMachine.cpp
 
   LINK_COMPONENTS
+  Analysis
+  AsmPrinter
+  CodeGen
+  CodeGenTypes
+  Core
+  MC
+  I8086Desc
+  I8086Info
+  SelectionDAG
   Support
+  Target
+  TargetParser
 
   ADD_TO_COMPONENT
   I8086

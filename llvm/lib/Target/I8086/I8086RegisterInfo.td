@@ -59,8 +59,10 @@ def FLAGS : I8086Reg<"flags", 0>;
 def GR8 : RegisterClass<"I8086", [i8], 8,
                         (add AL, CL, DL, BL, AH, CH, DH, BH)>;
 
+// Allocation order: caller-saved first (AX, CX, DX, BX), then callee-saved
+// (SI, DI); BP and SP come last and are reserved via getReservedRegs.
 def GR16 : RegisterClass<"I8086", [i16], 16,
-                         (add AX, CX, DX, BX, SP, BP, SI, DI)>;
+                         (add AX, CX, DX, BX, SI, DI, BP, SP)>;
 
 def SEGR : RegisterClass<"I8086", [i16], 16, (add ES, CS, SS, DS)>;
 

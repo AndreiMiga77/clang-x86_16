@@ -49,6 +49,7 @@ FunctionPass *createI8086ISelDag(I8086TargetMachine &TM,
                                  CodeGenOptLevel OptLevel);
 
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
+void initializeI8086AsmPrinterPass(PassRegistry &);
 
 } // namespace llvm
 

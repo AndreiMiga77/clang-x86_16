@@ -24,25 +24,21 @@ I8086RegisterInfo::I8086RegisterInfo() : I8086GenRegisterInfo(I8086::IP) {}
 
 const MCPhysReg *
 I8086RegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
-  const TargetFrameLowering *TFI = getFrameLowering(*MF);
-  // BP is saved/restored by the prologue when it is used as a frame pointer, so
-  // drop it from the CSR list in that case.
-  static const MCPhysReg CSR[] = {I8086::SI, I8086::DI, I8086::BP, 0};
-  static const MCPhysReg CSR_FP[] = {I8086::SI, I8086::DI, 0};
-  return TFI->hasFP(*MF) ? CSR_FP : CSR;
+  // BP is always reserved (frame pointer when a frame exists, otherwise unused)
+  // and is saved/restored by the prologue/epilogue, so it is never in the CSR
+  // list handled by the generic spill machinery.
+  static const MCPhysReg CSR[] = {I8086::SI, I8086::DI, 0};
+  return CSR;
 }
 
 BitVector I8086RegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   BitVector Reserved(getNumRegs());
-  const TargetFrameLowering *TFI = getFrameLowering(MF);
-
+  // SP and BP are never allocatable: SP cannot be a ModR/M base, and BP is
+  // reserved as the frame pointer.
   Reserved.set(I8086::SP);
+  Reserved.set(I8086::BP);
   Reserved.set(I8086::IP);
   Reserved.set(I8086::FLAGS);
-
-  if (TFI->hasFP(MF))
-    Reserved.set(I8086::BP);
-
   return Reserved;
 }
 
@@ -74,20 +70,34 @@ bool I8086RegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   else
     Offset += 2; // saved BP
 
-  // Fold in the displacement carried by the memory/frame operand.
-  Offset += MI.getOperand(FIOperandNum + 1).getImm();
-
   if (MI.getOpcode() == I8086::ADDframe) {
-    // Load effective address of a stack slot: lea reg, [base + Offset].
-    MI.setDesc(TII.get(I8086::LEA16));
+    // Address of a stack slot.  Operands are (dst, base(FI), offset).  The
+    // 8086 has only two-address adds, so materialize it as
+    //   mov dst, base ; [add dst, offset]
+    Offset += MI.getOperand(FIOperandNum + 1).getImm();
+    MI.setDesc(TII.get(I8086::MOV16rr));
     MI.getOperand(FIOperandNum).ChangeToRegister(BasePtr, false);
-    // Rewrite into a full memory operand: base, index(0), disp, seg(0).
-    MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+    MI.removeOperand(FIOperandNum + 1);
+
+    if (Offset == 0)
+      return false;
+
+    Register DstReg = MI.getOperand(0).getReg();
+    DebugLoc DL2 = MI.getDebugLoc();
+    if (Offset < 0)
+      BuildMI(MBB, std::next(II), DL2, TII.get(I8086::SUB16ri), DstReg)
+          .addReg(DstReg).addImm(-Offset);
+    else
+      BuildMI(MBB, std::next(II), DL2, TII.get(I8086::ADD16ri), DstReg)
+          .addReg(DstReg).addImm(Offset);
     return false;
   }
 
+  // Memory operand: (base, index, disp, seg).  FIOperandNum is the base; the
+  // displacement is two operands later.
+  Offset += MI.getOperand(FIOperandNum + 2).getImm();
   MI.getOperand(FIOperandNum).ChangeToRegister(BasePtr, false);
-  MI.getOperand(FIOperandNum + 1).ChangeToImmediate(Offset);
+  MI.getOperand(FIOperandNum + 2).ChangeToImmediate(Offset);
   return false;
 }
 

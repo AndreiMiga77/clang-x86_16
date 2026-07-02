@@ -41,7 +41,7 @@ def Rel8  : ImmType<3>;  // 8-bit pc-relative branch target
 def Rel16 : ImmType<4>;  // 16-bit pc-relative branch target
 
 class I8086Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
-                string asmstr> : Instruction {
+                string asmstr, list<dag> pattern = []> : Instruction {
   let Namespace = "I8086";
 
   bits<8> Opcode = opcod;
@@ -51,6 +51,7 @@ class I8086Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
   let OutOperandList = outs;
   let InOperandList  = ins;
   let AsmString      = asmstr;
+  let Pattern        = pattern;
 
   // Variable length; the emitter computes the real size.
   let Size = 0;
@@ -60,8 +61,9 @@ class I8086Inst<bits<8> opcod, Format f, ImmType i, dag outs, dag ins,
   let TSFlags{16-9} = Opcode;
 }
 
-// Convenience: pseudo instructions (none needed for MC, but keep the class).
-class I8086Pseudo<dag outs, dag ins, string asmstr>
-    : I8086Inst<0, Pseudo, NoImm, outs, ins, asmstr> {
+// Pseudo instructions (expanded before or during emission).
+class I8086Pseudo<dag outs, dag ins, string asmstr, list<dag> pattern = []>
+    : I8086Inst<0, Pseudo, NoImm, outs, ins, asmstr, pattern> {
   let isPseudo = 1;
+  let hasSideEffects = 0;
 }
