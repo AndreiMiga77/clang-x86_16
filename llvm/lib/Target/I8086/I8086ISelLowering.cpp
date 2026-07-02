@@ -78,17 +78,18 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::BRCOND, MVT::Other, Expand);
   setOperationAction(ISD::SIGN_EXTEND_INREG, MVT::i1, Expand);
 
-  // Multiply/divide are single-operand implicit-AX/DX ops; route them through
-  // libcalls for now (i8 promoted to i16 first).
-  for (auto Op : {ISD::MUL, ISD::UDIV, ISD::UREM, ISD::SDIV, ISD::SREM}) {
+  // 16-bit multiply/divide use the 8086's native MUL/DIV (implicit AX/DX) via
+  // the UMULLOHI16/UDIVREM16/... pseudos: MUL yields the full 32-bit product
+  // (AX=lo, DX=hi) and DIV yields quotient (AX) + remainder (DX).  The plain
+  // MUL/MULH/UDIV/UREM/... forms expand to the LOHI/DIVREM nodes; 8-bit ops are
+  // promoted to 16-bit.
+  for (auto Op : {ISD::MUL, ISD::MULHS, ISD::MULHU, ISD::UDIV, ISD::UREM,
+                  ISD::SDIV, ISD::SREM}) {
     setOperationAction(Op, MVT::i8, Promote);
-    setOperationAction(Op, MVT::i16, LibCall);
-  }
-  for (auto Op : {ISD::MULHS, ISD::MULHU, ISD::SMUL_LOHI, ISD::UMUL_LOHI,
-                  ISD::UDIVREM, ISD::SDIVREM}) {
-    setOperationAction(Op, MVT::i8, Expand);
     setOperationAction(Op, MVT::i16, Expand);
   }
+  for (auto Op : {ISD::UMUL_LOHI, ISD::SMUL_LOHI, ISD::UDIVREM, ISD::SDIVREM})
+    setOperationAction(Op, MVT::i16, Legal);
 
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
@@ -490,6 +491,50 @@ static MachineBasicBlock *emitShift(MachineInstr &MI, MachineBasicBlock *BB) {
   return BB;
 }
 
+// Expand a UMULLOHI16/SMULLOHI16/UDIVREM16/SDIVREM16 pseudo into the native
+// single-operand MUL/IMUL/DIV/IDIV, which read/write the implicit AX (and DX)
+// registers.  Operands: (out lo/q, out hi/r, in a, in b).
+static MachineBasicBlock *emitMulDiv(MachineInstr &MI, MachineBasicBlock *BB) {
+  const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
+  DebugLoc dl = MI.getDebugLoc();
+  Register Lo = MI.getOperand(0).getReg();
+  Register Hi = MI.getOperand(1).getReg();
+  Register A = MI.getOperand(2).getReg();
+  Register B = MI.getOperand(3).getReg();
+
+  // The dividend/multiplicand goes in AX.
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::AX).addReg(A);
+
+  unsigned InstOpc;
+  switch (MI.getOpcode()) {
+  case I8086::UMULLOHI16:
+    InstOpc = I8086::MUL16i;
+    break;
+  case I8086::SMULLOHI16:
+    InstOpc = I8086::IMUL16i;
+    break;
+  case I8086::UDIVREM16:
+    // Zero-extend AX into the DX:AX dividend.
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV16ri), I8086::DX).addImm(0);
+    InstOpc = I8086::DIV16i;
+    break;
+  case I8086::SDIVREM16:
+    // Sign-extend AX into DX:AX via CWD.
+    BuildMI(*BB, MI, dl, TII.get(I8086::CWD));
+    InstOpc = I8086::IDIV16i;
+    break;
+  default:
+    llvm_unreachable("unexpected mul/div pseudo");
+  }
+  BuildMI(*BB, MI, dl, TII.get(InstOpc)).addReg(B);
+
+  // MUL: AX=low, DX=high.  DIV: AX=quotient, DX=remainder.
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), Lo).addReg(I8086::AX);
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), Hi).addReg(I8086::DX);
+  MI.eraseFromParent();
+  return BB;
+}
+
 MachineBasicBlock *
 I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *BB) const {
@@ -497,6 +542,10 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   if (Opc == I8086::Shl8 || Opc == I8086::Shr8 || Opc == I8086::Sar8 ||
       Opc == I8086::Shl16 || Opc == I8086::Shr16 || Opc == I8086::Sar16)
     return emitShift(MI, BB);
+
+  if (Opc == I8086::UMULLOHI16 || Opc == I8086::SMULLOHI16 ||
+      Opc == I8086::UDIVREM16 || Opc == I8086::SDIVREM16)
+    return emitMulDiv(MI, BB);
 
   // sext i8 -> i16 via CBW: copy the byte into AL, CBW, copy AX out.
   if (Opc == I8086::MOVSX16r8) {

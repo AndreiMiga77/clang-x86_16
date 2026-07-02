@@ -311,6 +311,35 @@ defm IMUL : Grp3<"imul", MRM5r, MRM5m, MRM5r, MRM5m>;
 defm DIV  : Grp3<"div",  MRM6r, MRM6m, MRM6r, MRM6m>;
 defm IDIV : Grp3<"idiv", MRM7r, MRM7m, MRM7r, MRM7m>;
 
+// Native 16-bit multiply/divide with the implicit AX/DX operands modeled, for
+// CodeGen (the assembler uses the plain MUL16r/etc above).  MUL: DX:AX = AX *
+// src.  DIV: AX = DX:AX / src, DX = DX:AX % src.
+let isCodeGenOnly = 1, Defs = [AX, DX, FLAGS], Uses = [AX] in {
+  def MUL16i  : I8086Inst<0xF7, MRM4r, NoImm, (outs), (ins GR16:$src), "mul\t$src">;
+  def IMUL16i : I8086Inst<0xF7, MRM5r, NoImm, (outs), (ins GR16:$src), "imul\t$src">;
+}
+let isCodeGenOnly = 1, Defs = [AX, DX, FLAGS], Uses = [AX, DX] in {
+  def DIV16i  : I8086Inst<0xF7, MRM6r, NoImm, (outs), (ins GR16:$src), "div\t$src">;
+  def IDIV16i : I8086Inst<0xF7, MRM7r, NoImm, (outs), (ins GR16:$src), "idiv\t$src">;
+}
+
+// Pseudos expanded by EmitInstrWithCustomInserter into the above (copy operand
+// to AX, set up DX, run the instruction, copy the result(s) out).
+let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [AX, DX, FLAGS] in {
+  def UMULLOHI16 : I8086Pseudo<(outs GR16:$lo, GR16:$hi), (ins GR16:$a, GR16:$b),
+                               "#UMULLOHI16",
+                               [(set GR16:$lo, GR16:$hi, (umullohi GR16:$a, GR16:$b))]>;
+  def SMULLOHI16 : I8086Pseudo<(outs GR16:$lo, GR16:$hi), (ins GR16:$a, GR16:$b),
+                               "#SMULLOHI16",
+                               [(set GR16:$lo, GR16:$hi, (smullohi GR16:$a, GR16:$b))]>;
+  def UDIVREM16  : I8086Pseudo<(outs GR16:$q, GR16:$r), (ins GR16:$a, GR16:$b),
+                               "#UDIVREM16",
+                               [(set GR16:$q, GR16:$r, (udivrem GR16:$a, GR16:$b))]>;
+  def SDIVREM16  : I8086Pseudo<(outs GR16:$q, GR16:$r), (ins GR16:$a, GR16:$b),
+                               "#SDIVREM16",
+                               [(set GR16:$q, GR16:$r, (sdivrem GR16:$a, GR16:$b))]>;
+}
+
 // Decimal / ASCII adjust and sign extension.
 def DAA : NullaryInst<0x27, "daa">;
 def DAS : NullaryInst<0x2F, "das">;
