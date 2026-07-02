@@ -56,6 +56,7 @@ public:
   }
 
   bool addInstSelector() override;
+  void addPreEmitPass() override;
 };
 } // namespace
 
@@ -73,4 +74,9 @@ MachineFunctionInfo *I8086TargetMachine::createMachineFunctionInfo(
 bool I8086PassConfig::addInstSelector() {
   addPass(createI8086ISelDag(getI8086TargetMachine(), getOptLevel()));
   return false;
+}
+
+void I8086PassConfig::addPreEmitPass() {
+  // Relax out-of-range rel8 conditional branches into inverted-Jcc + JMP16.
+  addPass(&BranchRelaxationPassID);
 }

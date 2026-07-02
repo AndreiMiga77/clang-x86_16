@@ -2954,6 +2954,13 @@ def __mspabi_mpyll : RuntimeLibcallImpl<MUL_I64>;
 
 // setLibcallCallingConv(MUL_I64, CallingConv::MSP430_BUILTIN);
 
+def isI8086 : RuntimeLibcallPredicate<"TT.getArch() == Triple::i8086">;
+
+// Intel 8086: use the standard libgcc/compiler-rt integer helper routines
+// (__mulsi3, __divsi3, __muldi3, __ashldi3, ...) for i32/i64 arithmetic.
+def I8086SystemLibrary
+    : SystemRuntimeLibrary<isI8086, (add DefaultRuntimeLibcallImpls)>;
+
 def isMSP430 : RuntimeLibcallPredicate<"TT.getArch() == Triple::msp430">;
 
 defvar MSP430DefaultOptOut = [

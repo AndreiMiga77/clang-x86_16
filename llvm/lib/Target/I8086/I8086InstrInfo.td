@@ -318,8 +318,10 @@ def AAA : NullaryInst<0x37, "aaa">;
 def AAS : NullaryInst<0x3F, "aas">;
 def AAM : I8086Inst<0xD4, RawFrm, Imm8, (outs), (ins i8imm:$base), "aam\t$base">;
 def AAD : I8086Inst<0xD5, RawFrm, Imm8, (outs), (ins i8imm:$base), "aad\t$base">;
-def CBW : NullaryInst<0x98, "cbw">;
-def CWD : NullaryInst<0x99, "cwd">;
+let Defs = [AX], Uses = [AL] in
+def CBW : NullaryInst<0x98, "cbw">;   // sign-extend AL -> AX
+let Defs = [DX], Uses = [AX] in
+def CWD : NullaryInst<0x99, "cwd">;   // sign-extend AX -> DX:AX
 
 //===----------------------------------------------------------------------===//
 // Shifts and rotates (group 2: D0/D1 by 1, D2/D3 by CL).
@@ -537,5 +539,20 @@ def : Pat<(i16 (I8086Wrapper texternalsym:$dst)), (MOV16ri texternalsym:$dst)>;
 def : Pat<(i16 (I8086Wrapper tblockaddress:$dst)),(MOV16ri tblockaddress:$dst)>;
 def : Pat<(i16 (I8086Wrapper tjumptable:$dst)),   (MOV16ri tjumptable:$dst)>;
 
-// Simple i16 patterns not covered by instruction patterns.
+// i8 <-> i16 conversions.  The 8086 has no MOVZX/MOVSX and 8-bit ops leave the
+// high byte untouched, so:
+//   trunc  -> take the low 8-bit subregister
+//   anyext -> place the byte in the low half of an undef word
+//   zext   -> anyext then clear the high byte (and $reg, 0xff)
 def : Pat<(i8  (trunc GR16:$src)), (EXTRACT_SUBREG GR16:$src, sub_8bit_lo)>;
+def : Pat<(i16 (anyext GR8:$src)),
+          (INSERT_SUBREG (i16 (IMPLICIT_DEF)), GR8:$src, sub_8bit_lo)>;
+def : Pat<(i16 (zext GR8:$src)),
+          (AND16ri (INSERT_SUBREG (i16 (IMPLICIT_DEF)), GR8:$src, sub_8bit_lo),
+                   255)>;
+
+// sext i8 -> i16 via CBW (AL -> AX).  The custom inserter copies the byte into
+// AL, runs CBW, and copies AX out.
+let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [AX] in
+def MOVSX16r8 : I8086Pseudo<(outs GR16:$dst), (ins GR8:$src), "#MOVSX16r8",
+                            [(set GR16:$dst, (sext GR8:$src))]>;

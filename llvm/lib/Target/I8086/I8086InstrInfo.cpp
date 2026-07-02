@@ -9,9 +9,13 @@
 #include "I8086InstrInfo.h"
 #include "I8086.h"
 #include "I8086Subtarget.h"
+#include "MCTargetDesc/I8086BaseInfo.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCInstrDesc.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 using namespace llvm;
 
@@ -186,7 +190,8 @@ void I8086InstrInfo::loadRegFromStackSlot(
 
 unsigned I8086InstrInfo::removeBranch(MachineBasicBlock &MBB,
                                       int *BytesRemoved) const {
-  assert(!BytesRemoved && "code size not handled");
+  if (BytesRemoved)
+    *BytesRemoved = 0;
   MachineBasicBlock::iterator I = MBB.end();
   unsigned Count = 0;
   while (I != MBB.begin()) {
@@ -196,6 +201,8 @@ unsigned I8086InstrInfo::removeBranch(MachineBasicBlock &MBB,
     if (I->getOpcode() != I8086::JMP16 &&
         getCondFromBranchOpc(I->getOpcode()) == I8086CC::COND_INVALID)
       break;
+    if (BytesRemoved)
+      *BytesRemoved += getInstSizeInBytes(*I);
     I->eraseFromParent();
     I = MBB.end();
     ++Count;
@@ -279,20 +286,27 @@ unsigned I8086InstrInfo::insertBranch(MachineBasicBlock &MBB,
   assert(TBB && "insertBranch must not be told to insert a fallthrough");
   assert((Cond.size() == 1 || Cond.size() == 0) &&
          "i8086 branch conditions have one component!");
-  assert(!BytesAdded && "code size not handled");
+  if (BytesAdded)
+    *BytesAdded = 0;
 
   if (Cond.empty()) {
     assert(!FBB && "Unconditional branch with multiple successors!");
     BuildMI(&MBB, DL, get(I8086::JMP16)).addMBB(TBB);
+    if (BytesAdded)
+      *BytesAdded += 3; // E9 + rel16
     return 1;
   }
 
   unsigned Count = 0;
   unsigned Opc = getBranchOpcFromCond(static_cast<I8086CC::CondCode>(Cond[0].getImm()));
   BuildMI(&MBB, DL, get(Opc)).addMBB(TBB);
+  if (BytesAdded)
+    *BytesAdded += 2; // Jcc + rel8
   ++Count;
   if (FBB) {
     BuildMI(&MBB, DL, get(I8086::JMP16)).addMBB(FBB);
+    if (BytesAdded)
+      *BytesAdded += 3;
     ++Count;
   }
   return Count;
@@ -307,6 +321,8 @@ unsigned I8086InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   case TargetOpcode::KILL:
   case TargetOpcode::DBG_VALUE:
     return 0;
+  case TargetOpcode::COPY:
+    return 2; // becomes a MOV reg,reg
   case TargetOpcode::INLINEASM:
   case TargetOpcode::INLINEASM_BR: {
     const MachineFunction *MF = MI.getParent()->getParent();
@@ -315,5 +331,103 @@ unsigned I8086InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
                                   *MF->getTarget().getMCAsmInfo());
   }
   }
-  return Desc.getSize();
+
+  // Our instructions are variable-length (Size == 0 in the .td); compute the
+  // exact size from the encoding form and operands (mirrors the code emitter).
+  uint64_t TSFlags = Desc.TSFlags;
+  unsigned Form = I8086II::getForm(TSFlags);
+  if (Form == I8086II::Pseudo)
+    return 0;
+
+  unsigned Size = 1; // opcode
+
+  // Logical operand list, skipping operands tied to an earlier one (same as
+  // the emitter), so memory operands are located correctly.
+  SmallVector<unsigned, 8> Ops;
+  for (unsigned I = 0, E = Desc.getNumOperands(); I != E; ++I) {
+    if (Desc.getOperandConstraint(I, MCOI::TIED_TO) != -1)
+      continue;
+    Ops.push_back(I);
+  }
+
+  bool HasModRMReg = Form == I8086II::MRMDestReg || Form == I8086II::MRMSrcReg ||
+                     I8086II::isMRMGroupReg(Form);
+  int MemLogical = -1;
+  if (Form == I8086II::MRMDestMem)
+    MemLogical = 0;
+  else if (Form == I8086II::MRMSrcMem)
+    MemLogical = 1;
+  else if (I8086II::isMRMGroup(Form) && !I8086II::isMRMGroupReg(Form))
+    MemLogical = 0;
+
+  if (HasModRMReg)
+    Size += 1; // ModR/M byte
+  if (MemLogical >= 0) {
+    Size += 1; // ModR/M byte
+    unsigned P = Ops[MemLogical];
+    MCRegister Base = MI.getOperand(P).getReg();
+    MCRegister Index = MI.getOperand(P + 1).getReg();
+    const MachineOperand &Disp = MI.getOperand(P + 2);
+    if (MI.getOperand(P + 3).getReg())
+      Size += 1; // segment override prefix
+
+    // Normalize a lone SI/DI base into the index slot (as the emitter does).
+    if (!Index && (Base == I8086::SI || Base == I8086::DI)) {
+      Index = Base;
+      Base = MCRegister();
+    }
+    bool Direct = !Base && !Index;
+    bool BPOnly = (Base == I8086::BP && !Index); // ModR/M rm == 6
+    if (Direct || !Disp.isImm())
+      Size += 2; // [disp16] or an unresolved symbolic displacement
+    else if (Disp.getImm() == 0 && !BPOnly)
+      Size += 0; // no displacement
+    else if (isInt<8>(Disp.getImm()))
+      Size += 1; // disp8
+    else
+      Size += 2; // disp16
+  }
+
+  switch (I8086II::getImmType(TSFlags)) {
+  case I8086II::Imm8:
+  case I8086II::Rel8:
+    Size += 1;
+    break;
+  case I8086II::Imm16:
+  case I8086II::Rel16:
+    Size += 2;
+    break;
+  }
+  if (Form == I8086II::RawFrmFar)
+    Size += 4; // off16 + seg16
+  return Size;
+}
+
+MachineBasicBlock *
+I8086InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
+  assert((MI.getOpcode() == I8086::JMP16 ||
+          getCondFromBranchOpc(MI.getOpcode()) != I8086CC::COND_INVALID) &&
+         "expected a direct branch");
+  return MI.getOperand(0).getMBB();
+}
+
+bool I8086InstrInfo::isBranchOffsetInRange(unsigned BranchOpc,
+                                           int64_t BrOffset) const {
+  // The near JMP is rel16 and, thanks to 16-bit wraparound, reaches anywhere in
+  // the 64K segment; conditional Jcc are rel8 only.
+  if (BranchOpc == I8086::JMP16)
+    return true;
+  assert(getCondFromBranchOpc(BranchOpc) != I8086CC::COND_INVALID &&
+         "expected a conditional branch");
+  return isInt<8>(BrOffset);
+}
+
+void I8086InstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,
+                                          MachineBasicBlock &NewDestBB,
+                                          MachineBasicBlock &RestoreBB,
+                                          const DebugLoc &DL, int64_t BrOffset,
+                                          RegScavenger *RS) const {
+  // Despite the name, branch relaxation uses this to insert a long *direct*
+  // unconditional branch; the near JMP always reaches within the segment.
+  BuildMI(&MBB, DL, get(I8086::JMP16)).addMBB(&NewDestBB);
 }

@@ -35,14 +35,21 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   setStackPointerRegisterToSaveRestore(I8086::SP);
   setBooleanContents(ZeroOrOneBooleanContent);
 
+  // No MOVZX/MOVSX and 8-bit ops don't auto-zero the high byte, so extending
+  // loads are expanded into a byte load + an explicit extend (patterns below).
   for (MVT VT : MVT::integer_valuetypes()) {
     setLoadExtAction(ISD::EXTLOAD, VT, MVT::i1, Promote);
     setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i1, Promote);
     setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i1, Promote);
+    setLoadExtAction(ISD::EXTLOAD, VT, MVT::i8, Expand);
+    setLoadExtAction(ISD::ZEXTLOAD, VT, MVT::i8, Expand);
     setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i8, Expand);
     setLoadExtAction(ISD::SEXTLOAD, VT, MVT::i16, Expand);
   }
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
+
+  // i8->i16 sign extension uses CBW via the MOVSX16r8 pseudo (see the .td);
+  // zero/any extension are handled by patterns.
 
   // The 8086 shifts only by 1 or CL.  SHL/SRL/SRA are selected via the Shl*/
   // Shr*/Sar* custom-inserter pseudos, which move the shift count into CL and
@@ -490,6 +497,21 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
   if (Opc == I8086::Shl8 || Opc == I8086::Shr8 || Opc == I8086::Sar8 ||
       Opc == I8086::Shl16 || Opc == I8086::Shr16 || Opc == I8086::Sar16)
     return emitShift(MI, BB);
+
+  // sext i8 -> i16 via CBW: copy the byte into AL, CBW, copy AX out.
+  if (Opc == I8086::MOVSX16r8) {
+    const TargetInstrInfo &TII =
+        *BB->getParent()->getSubtarget().getInstrInfo();
+    DebugLoc dl = MI.getDebugLoc();
+    BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::AL)
+        .addReg(MI.getOperand(1).getReg());
+    BuildMI(*BB, MI, dl, TII.get(I8086::CBW));
+    BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY),
+            MI.getOperand(0).getReg())
+        .addReg(I8086::AX);
+    MI.eraseFromParent();
+    return BB;
+  }
 
   assert((Opc == I8086::Select8 || Opc == I8086::Select16) &&
          "Unexpected instr type to insert");
