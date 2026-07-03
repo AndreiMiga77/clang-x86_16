@@ -159,7 +159,7 @@ let Defs = [SP], Uses = [SP] in
 def PUSH16r  : I8086Inst<0x50, AddRegFrm, NoImm, (outs), (ins GR16:$reg),
                          "push\t$reg", [(I8086push GR16:$reg)]>;
 def PUSH16m  : I8086Inst<0xFF, MRM6m, NoImm, (outs), (ins mem16:$mem), "push\t$mem">;
-def POP16r   : I8086Inst<0x58, AddRegFrm, NoImm, (outs), (ins GR16:$reg), "pop\t$reg">;
+def POP16r   : I8086Inst<0x58, AddRegFrm, NoImm, (outs GR16:$reg), (ins), "pop\t$reg">;
 def POP16m   : I8086Inst<0x8F, MRM0m, NoImm, (outs), (ins mem16:$mem), "pop\t$mem">;
 
 def PUSHES : NullaryInst<0x06, "push\tes">;

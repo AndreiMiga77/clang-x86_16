@@ -48,6 +48,11 @@ class PassRegistry;
 FunctionPass *createI8086ISelDag(I8086TargetMachine &TM,
                                  CodeGenOptLevel OptLevel);
 
+// Post-RA peephole: rewrite `and reg,0x00FF` / `and reg,0xFF00` into a single
+// byte-clearing `xor <hibyte>,<hibyte>` / `xor <lobyte>,<lobyte>` when the
+// register has a byte subregister (AX/BX/CX/DX) and the AND's flags are dead.
+FunctionPass *createI8086FixupByteMaskPass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 

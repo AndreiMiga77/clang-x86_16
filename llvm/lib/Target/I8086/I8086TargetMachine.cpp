@@ -77,6 +77,9 @@ bool I8086PassConfig::addInstSelector() {
 }
 
 void I8086PassConfig::addPreEmitPass() {
+  // Byte-mask AND -> XOR peephole.  Must run before branch relaxation so the
+  // instruction sizes it changes are final when offsets are computed.
+  addPass(createI8086FixupByteMaskPass());
   // Relax out-of-range rel8 conditional branches into inverted-Jcc + JMP16.
   addPass(&BranchRelaxationPassID);
 }
