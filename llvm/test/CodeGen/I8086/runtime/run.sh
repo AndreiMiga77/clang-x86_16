@@ -71,4 +71,8 @@ sum_big=100520"
 "$CLANG" "${cflags[@]}" "$DIR/rotate.c" -o "$WORK/r.o"; link rot "$WORK/r.o" "$WORK/rt.o"
 check rotate "$(run rot.com ROT.TXT)" "9025 16675 33"
 
+# shift/rotate by 8 (byte ops through AX)
+"$CLANG" "${cflags[@]}" "$DIR/shift-by-8.c" -o "$WORK/s8.o"; link s8 "$WORK/s8.o" "$WORK/rt.o"
+check shift-by-8 "$(run s8.com S8.TXT)" "13312 18 65410 13330 18"
+
 exit $FAILED

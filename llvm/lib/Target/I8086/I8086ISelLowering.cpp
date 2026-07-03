@@ -545,6 +545,46 @@ static MachineBasicBlock *emitShift(MachineInstr &MI, MachineBasicBlock *BB) {
   return BB;
 }
 
+// A 16-bit shift/rotate by 8 done as byte moves through AX (see the pseudos):
+//   shl -> mov ah,al; mov al,0    srl -> mov al,ah; mov ah,0
+//   sar -> mov al,ah; cbw         rol/ror (byte swap) -> xchg al,ah
+static MachineBasicBlock *emitShiftBy8(MachineInstr &MI,
+                                       MachineBasicBlock *BB) {
+  const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
+  DebugLoc dl = MI.getDebugLoc();
+  Register Dst = MI.getOperand(0).getReg();
+  Register Src = MI.getOperand(1).getReg();
+
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::AX).addReg(Src);
+  switch (MI.getOpcode()) {
+  case I8086::Shl16by8:
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AH).addReg(I8086::AL);
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AL).addImm(0);
+    break;
+  case I8086::Shr16by8:
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AH).addImm(0);
+    break;
+  case I8086::Sar16by8:
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
+    BuildMI(*BB, MI, dl, TII.get(I8086::CBW));
+    break;
+  case I8086::Rol16by8:
+  case I8086::Ror16by8:
+    BuildMI(*BB, MI, dl, TII.get(I8086::XCHG8rr))
+        .addReg(I8086::AL)
+        .addReg(I8086::AH)
+        .addReg(I8086::AL, RegState::ImplicitDefine)
+        .addReg(I8086::AH, RegState::ImplicitDefine);
+    break;
+  default:
+    llvm_unreachable("unexpected shift-by-8 pseudo");
+  }
+  BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), Dst).addReg(I8086::AX);
+  MI.eraseFromParent();
+  return BB;
+}
+
 // Expand a UMULLOHI16/SMULLOHI16/UDIVREM16/SDIVREM16 pseudo into the native
 // single-operand MUL/IMUL/DIV/IDIV, which read/write the implicit AX (and DX)
 // registers.  Operands: (out lo/q, out hi/r, in a, in b).
@@ -598,6 +638,11 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
       Opc == I8086::Rol8 || Opc == I8086::Ror8 ||
       Opc == I8086::Rol16 || Opc == I8086::Ror16)
     return emitShift(MI, BB);
+
+  if (Opc == I8086::Shl16by8 || Opc == I8086::Shr16by8 ||
+      Opc == I8086::Sar16by8 || Opc == I8086::Rol16by8 ||
+      Opc == I8086::Ror16by8)
+    return emitShiftBy8(MI, BB);
 
   if (Opc == I8086::UMULLOHI16 || Opc == I8086::SMULLOHI16 ||
       Opc == I8086::UDIVREM16 || Opc == I8086::SDIVREM16)
