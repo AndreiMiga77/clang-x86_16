@@ -79,4 +79,8 @@ check shift-by-8 "$(run s8.com S8.TXT)" "13312 18 65410 13330 18"
 "$CLANG" "${cflags[@]}" "$DIR/shift-large.c" -o "$WORK/slrg.o"; link slrg "$WORK/slrg.o" "$WORK/rt.o"
 check shift-large "$(run slrg.com SL.TXT)" "26624 16384 2 65520 16675 18050 132"
 
+# bitwise complement (NOT) and negation (NEG), 16- and 8-bit
+"$CLANG" "${cflags[@]}" "$DIR/not-neg.c" -o "$WORK/nn.o"; link nn "$WORK/nn.o" "$WORK/rt.o"
+check not-neg "$(run nn.com NN.TXT)" "60875 60876 237 238"
+
 exit $FAILED

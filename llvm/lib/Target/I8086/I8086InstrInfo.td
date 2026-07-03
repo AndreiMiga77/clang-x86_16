@@ -446,19 +446,40 @@ def DEC8m  : I8086Inst<0xFE, MRM1m, NoImm, (outs), (ins mem8e:$mem), "dec\t$mem"
 def INC16m : I8086Inst<0xFF, MRM0m, NoImm, (outs), (ins mem16e:$mem), "inc\t$mem">;
 def DEC16m : I8086Inst<0xFF, MRM1m, NoImm, (outs), (ins mem16e:$mem), "dec\t$mem">;
 
-// Group 3 (F6/F7): NOT=/2 NEG=/3 MUL=/4 IMUL=/5 DIV=/6 IDIV=/7.
+// Group 3 (F6/F7): NOT=/2 NEG=/3 MUL=/4 IMUL=/5 DIV=/6 IDIV=/7.  MUL/IMUL/DIV/
+// IDIV are asm-only here (CodeGen uses the AX/DX-modeled MUL16i/DIV16i below).
 multiclass Grp3<string m, Format r8, Format m8, Format r16, Format m16> {
   def 8r  : I8086Inst<0xF6, r8,  NoImm, (outs), (ins GR8:$reg),   m#"\t$reg">;
   def 8m  : I8086Inst<0xF6, m8,  NoImm, (outs), (ins mem8e:$mem),  m#"\t$mem">;
   def 16r : I8086Inst<0xF7, r16, NoImm, (outs), (ins GR16:$reg),  m#"\t$reg">;
   def 16m : I8086Inst<0xF7, m16, NoImm, (outs), (ins mem16e:$mem), m#"\t$mem">;
 }
-defm NOT  : Grp3<"not",  MRM2r, MRM2m, MRM2r, MRM2m>;
-defm NEG  : Grp3<"neg",  MRM3r, MRM3m, MRM3r, MRM3m>;
 defm MUL  : Grp3<"mul",  MRM4r, MRM4m, MRM4r, MRM4m>;
 defm IMUL : Grp3<"imul", MRM5r, MRM5m, MRM5r, MRM5m>;
 defm DIV  : Grp3<"div",  MRM6r, MRM6m, MRM6r, MRM6m>;
 defm IDIV : Grp3<"idiv", MRM7r, MRM7m, MRM7r, MRM7m>;
+
+// NOT (~x): two-address register CodeGen form -- 2 bytes / 3 cycles and, unlike
+// `xor r,-1` (3-4 bytes, 4 cycles), leaves FLAGS untouched.  Asm-only mem forms.
+let Constraints = "$src1 = $dst" in {
+  def NOT8r  : I8086Inst<0xF6, MRM2r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),
+                         "not\t$dst", [(set GR8:$dst,  (not GR8:$src1))]>;
+  def NOT16r : I8086Inst<0xF7, MRM2r, NoImm, (outs GR16:$dst), (ins GR16:$src1),
+                         "not\t$dst", [(set GR16:$dst, (not GR16:$src1))]>;
+}
+def NOT8m  : I8086Inst<0xF6, MRM2m, NoImm, (outs), (ins mem8e:$mem),  "not\t$mem">;
+def NOT16m : I8086Inst<0xF7, MRM2m, NoImm, (outs), (ins mem16e:$mem), "not\t$mem">;
+
+// NEG (-x = 0-x): two-address register CodeGen form -- one in-place instruction
+// (2 bytes) that sets FLAGS, versus the `xor r,r; sub r,x` pair otherwise.
+let Constraints = "$src1 = $dst", Defs = [FLAGS] in {
+  def NEG8r  : I8086Inst<0xF6, MRM3r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),
+                         "neg\t$dst", [(set GR8:$dst,  (ineg GR8:$src1))]>;
+  def NEG16r : I8086Inst<0xF7, MRM3r, NoImm, (outs GR16:$dst), (ins GR16:$src1),
+                         "neg\t$dst", [(set GR16:$dst, (ineg GR16:$src1))]>;
+}
+def NEG8m  : I8086Inst<0xF6, MRM3m, NoImm, (outs), (ins mem8e:$mem),  "neg\t$mem">;
+def NEG16m : I8086Inst<0xF7, MRM3m, NoImm, (outs), (ins mem16e:$mem), "neg\t$mem">;
 
 // Native 16-bit multiply/divide with the implicit AX/DX operands modeled, for
 // CodeGen (the assembler uses the plain MUL16r/etc above).  MUL: DX:AX = AX *
