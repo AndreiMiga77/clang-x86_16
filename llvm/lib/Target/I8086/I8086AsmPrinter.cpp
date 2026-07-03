@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "I8086.h"
+#include "I8086InstrInfo.h"
 #include "I8086MCInstLower.h"
 #include "I8086TargetMachine.h"
 #include "MCTargetDesc/I8086InstPrinter.h"
@@ -16,11 +17,19 @@
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
 using namespace llvm;
 
 #define DEBUG_TYPE "asm-printer"
+
+// Annotate each emitted instruction with its estimated 8086 size and cost as a
+// trailing comment (needs a verbose-asm output, e.g. llc -S).  A hand-analysis
+// aid for the size/cycle-tuned backend.
+static cl::opt<bool> AnnotateCost(
+    "i8086-annotate-cost", cl::Hidden,
+    cl::desc("Annotate each i8086 instruction with its estimated size/cost"));
 
 namespace {
 class I8086AsmPrinter : public AsmPrinter {
@@ -69,6 +78,14 @@ bool I8086AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNo,
 }
 
 void I8086AsmPrinter::emitInstruction(const MachineInstr *MI) {
+  if (AnnotateCost && OutStreamer->isVerboseAsm()) {
+    const auto *TII =
+        static_cast<const I8086InstrInfo *>(MF->getSubtarget().getInstrInfo());
+    OutStreamer->AddComment("cost: " + Twine(TII->getInstructionCost(*MI)) +
+                            " cyc, " + Twine(TII->getInstSizeInBytes(*MI)) +
+                            " B");
+  }
+
   I8086MCInstLower MCInstLowering(OutContext, *this);
   MCInst TmpInst;
   MCInstLowering.Lower(MI, TmpInst);

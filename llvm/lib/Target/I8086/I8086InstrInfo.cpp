@@ -430,6 +430,175 @@ unsigned I8086InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   return Size;
 }
 
+//===----------------------------------------------------------------------===//
+// Instruction cost model.
+//
+// costs.md lists the 8086 execution-unit (EU) clock counts and byte sizes but
+// explicitly ignores the bus-interface-unit (BIU).  The BIU prefetches code and
+// performs operand memory cycles over a shared bus that moves one word per
+// 4 clocks; it overlaps EU execution, so over a straight-line stream the bus is
+// the serial bottleneck.  We therefore model an instruction's cost as
+//   max(EU cycles, 4 * busWords)
+// where busWords = code words to fetch + operand data words.  This captures the
+// classic 8086 effect that a nominally 2-clock `mov reg,reg` really costs about
+// 4 clocks (one word of prefetch), while leaving genuinely slow instructions
+// (MUL, memory ALU, ...) dominated by their EU time.
+//===----------------------------------------------------------------------===//
+
+// Effective-address computation cost (clocks) for a memory operand, from the
+// addressing-mode table in costs.md.  Base/Index are the 16-bit address
+// registers (0 if absent); Disp is the displacement operand.
+static unsigned effectiveAddressCost(MCRegister Base, MCRegister Index,
+                                     const MachineOperand &Disp) {
+  // A lone SI/DI encodes in the index slot (as the emitter normalizes it).
+  if (!Index && (Base == I8086::SI || Base == I8086::DI)) {
+    Index = Base;
+    Base = MCRegister();
+  }
+  if (!Base && !Index)
+    return 6; // [disp16] direct
+
+  unsigned EA;
+  if (Base && Index)
+    // BX+SI and BP+DI are 7 clocks; BX+DI and BP+SI are 8.
+    EA = ((Base == I8086::BX && Index == I8086::SI) ||
+          (Base == I8086::BP && Index == I8086::DI))
+             ? 7
+             : 8;
+  else
+    EA = 5; // single base or index register
+
+  // A programmer displacement on a register-based address adds 4.
+  if (!Disp.isImm() || Disp.getImm() != 0)
+    EA += 4;
+  return EA;
+}
+
+// A single-move MOV (cheaper memory store than a read-modify-write ALU op).
+static bool isMovLike(unsigned Opc) {
+  switch (Opc) {
+  case I8086::MOV8rr:  case I8086::MOV16rr:
+  case I8086::MOV8ri:  case I8086::MOV16ri:
+  case I8086::MOV8rm:  case I8086::MOV16rm:
+  case I8086::MOV8mr:  case I8086::MOV16mr:
+  case I8086::MOV8mi:  case I8086::MOV16mi:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// EU execution cycles for MI's operation (costs.md), before the BIU correction.
+// EA is the memory operand's effective-address cost (0 when register-only).
+static unsigned euBaseCycles(const MachineInstr &MI, bool HasMem, bool MemDest,
+                             unsigned EA) {
+  switch (MI.getOpcode()) {
+  // Multiply / divide: costs.md gives wide ranges; use a representative value.
+  case I8086::MUL16i:  return HasMem ? 129 + EA : 125;
+  case I8086::IMUL16i: return HasMem ? 147 + EA : 141;
+  case I8086::DIV16i:  return HasMem ? 163 + EA : 153;
+  case I8086::IDIV16i: return HasMem ? 181 + EA : 175;
+
+  // Shift/rotate by 1 (D0/D1) is 2 clocks; by CL (D2/D3) is 8+4/bit, modeled at
+  // a nominal ~4-bit count since the count is a runtime value.
+  case I8086::SHL8b1:  case I8086::SHL16b1: case I8086::SHR8b1:
+  case I8086::SHR16b1: case I8086::SAR8b1:  case I8086::SAR16b1:
+  case I8086::ROL8b1:  case I8086::ROL16b1: case I8086::ROR8b1:
+  case I8086::ROR16b1:
+    return 2;
+  case I8086::SHL8CL:  case I8086::SHL16CL: case I8086::SHR8CL:
+  case I8086::SHR16CL: case I8086::SAR8CL:  case I8086::SAR16CL:
+  case I8086::ROL8CL:  case I8086::ROL16CL: case I8086::ROR8CL:
+  case I8086::ROR16CL:
+    return 24; // 8 + 4*~4
+
+  // Control flow (data-dependent; branches modeled at the taken timing).
+  case I8086::CALL16:  return 19;
+  case I8086::CALL16r: return 16;
+  case I8086::CALL16m: return 21 + EA;
+  case I8086::RET:     return 16;
+  case I8086::RETI: case I8086::RETF: case I8086::RETFI: return 20;
+  case I8086::JMP8: case I8086::JMP16: return 15;
+  case I8086::JMP16r:  return 11;
+  case I8086::JMP16m:  return 18 + EA;
+  case I8086::LOOP: case I8086::LOOPE: case I8086::LOOPNE: return 17;
+  case I8086::JCXZ:    return 18;
+
+  // Stack.
+  case I8086::PUSH16r: return 11;
+  case I8086::PUSH16m: return 16 + EA;
+  case I8086::POP16r:  return 8;
+  case I8086::POP16m:  return 17 + EA;
+  case I8086::PUSHF:   return 10;
+  case I8086::POPF:    return 8;
+
+  // Misc.
+  case I8086::LEA16:    return 2 + EA;
+  case I8086::CBW:      return 2;
+  case I8086::CWD:      return 5;
+  case I8086::XCHG16ar: return 3;
+  case I8086::XCHG8rr: case I8086::XCHG16rr: return 4;
+  case I8086::XCHG8rm: case I8086::XCHG16rm: return 17 + EA;
+  default:
+    break;
+  }
+
+  // Conditional Jcc (all sixteen conditions): taken 16, not-taken 4 -> taken.
+  if (getCondFromBranchOpc(MI.getOpcode()) != I8086CC::COND_INVALID)
+    return 16;
+
+  // Generic ALU / MOV / CMP / TEST / logic, split by operand form.
+  bool Mov = isMovLike(MI.getOpcode());
+  if (!HasMem) {
+    if (I8086II::getImmType(MI.getDesc().TSFlags) != I8086II::NoImm)
+      return 4;            // reg, imm
+    return Mov ? 2 : 3;    // reg, reg
+  }
+  if (MemDest)
+    return Mov ? 9 + EA : 16 + EA; // store vs read-modify-write
+  return Mov ? 8 + EA : 9 + EA;    // load
+}
+
+unsigned I8086InstrInfo::getInstructionCost(const MachineInstr &MI) const {
+  unsigned Size = getInstSizeInBytes(MI);
+  if (Size == 0)
+    return 0; // pseudo / meta: no machine code
+
+  const MCInstrDesc &Desc = MI.getDesc();
+  unsigned Form = I8086II::getForm(Desc.TSFlags);
+
+  // Locate the memory operand (as getInstSizeInBytes does) and price its EA.
+  int MemLogical = -1;
+  bool MemDest = false;
+  if (Form == I8086II::MRMDestMem) {
+    MemLogical = 0;
+    MemDest = true;
+  } else if (Form == I8086II::MRMSrcMem) {
+    MemLogical = 1;
+  } else if (I8086II::isMRMGroup(Form) && !I8086II::isMRMGroupReg(Form)) {
+    MemLogical = 0;
+  }
+
+  unsigned EA = 0, DataWords = 0;
+  if (MemLogical >= 0) {
+    SmallVector<unsigned, 8> Ops;
+    for (unsigned I = 0, E = Desc.getNumOperands(); I != E; ++I)
+      if (Desc.getOperandConstraint(I, MCOI::TIED_TO) == -1)
+        Ops.push_back(I);
+    unsigned P = Ops[MemLogical];
+    EA = effectiveAddressCost(MI.getOperand(P).getReg(),
+                              MI.getOperand(P + 1).getReg(),
+                              MI.getOperand(P + 2));
+    // A read-modify-write destination touches the bus twice (read + write); a
+    // plain store or a load touches it once.
+    DataWords = (MemDest && !isMovLike(MI.getOpcode())) ? 2 : 1;
+  }
+
+  unsigned EU = euBaseCycles(MI, MemLogical >= 0, MemDest, EA);
+  unsigned BusWords = (Size + 1) / 2 + DataWords;
+  return std::max(EU, 4 * BusWords);
+}
+
 MachineBasicBlock *
 I8086InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
   assert((isUncondDirectBranch(MI.getOpcode()) ||

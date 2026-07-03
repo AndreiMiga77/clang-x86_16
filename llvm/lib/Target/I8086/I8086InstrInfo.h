@@ -45,6 +45,10 @@ public:
 
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 
+  // Rough per-instruction cost in 8086 clock cycles: the costs.md execution-unit
+  // timings plus a bus-interface-unit (prefetch) correction (see the .cpp).
+  unsigned getInstructionCost(const MachineInstr &MI) const;
+
   bool expandPostRAPseudo(MachineInstr &MI) const override;
 
   // Branch relaxation support (8086 Jcc is rel8-only).
