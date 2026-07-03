@@ -701,6 +701,22 @@ let isCodeGenOnly = 1, Constraints = "$src1 = $dst", Defs = [FLAGS],
   def ROR16CL : I8086Inst<0xD3, MRM1r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "ror\t$dst, cl">;
 }
 
+// Shift/rotate-by-1 codegen instructions (D0/D1 /digit, 2 bytes, 2 cycles).
+// Two-address; used for constant counts of 1 (once) and 2 (twice) -- both faster
+// than the CL form and no larger.
+let isCodeGenOnly = 1, Constraints = "$src1 = $dst", Defs = [FLAGS] in {
+  def SHL8b1  : I8086Inst<0xD0, MRM4r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "shl\t$dst, 1">;
+  def SHL16b1 : I8086Inst<0xD1, MRM4r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shl\t$dst, 1">;
+  def SHR8b1  : I8086Inst<0xD0, MRM5r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "shr\t$dst, 1">;
+  def SHR16b1 : I8086Inst<0xD1, MRM5r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shr\t$dst, 1">;
+  def SAR8b1  : I8086Inst<0xD0, MRM7r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "sar\t$dst, 1">;
+  def SAR16b1 : I8086Inst<0xD1, MRM7r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "sar\t$dst, 1">;
+  def ROL8b1  : I8086Inst<0xD0, MRM0r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "rol\t$dst, 1">;
+  def ROL16b1 : I8086Inst<0xD1, MRM0r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "rol\t$dst, 1">;
+  def ROR8b1  : I8086Inst<0xD0, MRM1r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "ror\t$dst, 1">;
+  def ROR16b1 : I8086Inst<0xD1, MRM1r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "ror\t$dst, 1">;
+}
+
 // Shift pseudos: EmitInstrWithCustomInserter copies the count into CL and emits
 // the shift-by-CL instruction above.
 let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
@@ -715,6 +731,22 @@ let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
   def Rol16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Rol16", [(set GR16:$dst, (rotl GR16:$src, GR8:$amt))]>;
   def Ror16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Ror16", [(set GR16:$dst, (rotr GR16:$src, GR8:$amt))]>;
 }
+
+// Constant shift/rotate by 1 or 2 uses the D0/D1 by-1 form (2 cycles each), which
+// is faster than -- and no larger than -- the CL form.  These patterns are more
+// specific than the GR8:$amt pseudo above, so they win for counts 1 and 2; counts
+// >= 3 fall through to the (smaller) CL pseudo.
+multiclass By1Pat<SDNode node, Instruction Op8, Instruction Op16> {
+  def : Pat<(node GR8:$s,  (i8 1)), (Op8 GR8:$s)>;
+  def : Pat<(node GR8:$s,  (i8 2)), (Op8 (Op8 GR8:$s))>;
+  def : Pat<(node GR16:$s, (i8 1)), (Op16 GR16:$s)>;
+  def : Pat<(node GR16:$s, (i8 2)), (Op16 (Op16 GR16:$s))>;
+}
+defm : By1Pat<shl,  SHL8b1, SHL16b1>;
+defm : By1Pat<srl,  SHR8b1, SHR16b1>;
+defm : By1Pat<sra,  SAR8b1, SAR16b1>;
+defm : By1Pat<rotl, ROL8b1, ROL16b1>;
+defm : By1Pat<rotr, ROR8b1, ROR16b1>;
 
 //===----------------------------------------------------------------------===//
 // GlobalAddress / ExternalSymbol wrappers (materialize a 16-bit address).
