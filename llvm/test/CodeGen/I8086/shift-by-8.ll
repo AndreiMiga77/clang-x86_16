@@ -61,3 +61,41 @@ define i8 @shr8trunc(i16 %x) {
   %r = trunc i16 %s to i8
   ret i8 %r
 }
+
+; A shift by 9..15 is the byte op plus a residual shift of 1..7.  For a residual
+; of 1 or 2 the by-1 form is used; for 3..7 the CL form.
+; shl by 9 = (hi:=lo, lo:=0) then one shl-by-1.
+; CHECK-LABEL: shl9:
+; CHECK: mov ah, al
+; CHECK: mov al, 0
+; CHECK: shl ax, 1
+; CHECK-NOT: shl ax, 1
+define i16 @shl9(i16 %x) {
+  %y = xor i16 %x, 4660
+  %r = shl i16 %y, 9
+  ret i16 %r
+}
+
+; shl by 12 = byte op then residual shift of 4 via CL.
+; CHECK-LABEL: shl12:
+; CHECK: mov ah, al
+; CHECK: mov al, 0
+; CHECK: mov cl, 4
+; CHECK: shl ax, cl
+define i16 @shl12(i16 %x) {
+  %y = xor i16 %x, 4660
+  %r = shl i16 %y, 12
+  ret i16 %r
+}
+
+; ashr by 11 = (lo:=hi, hi:=sign) then residual sar of 3 via CL.
+; CHECK-LABEL: sar11:
+; CHECK: mov al, ah
+; CHECK: cbw
+; CHECK: mov cl, 3
+; CHECK: sar ax, cl
+define i16 @sar11(i16 %x) {
+  %y = xor i16 %x, 4660
+  %r = ashr i16 %y, 11
+  ret i16 %r
+}

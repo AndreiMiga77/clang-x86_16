@@ -75,4 +75,8 @@ check rotate "$(run rot.com ROT.TXT)" "9025 16675 33"
 "$CLANG" "${cflags[@]}" "$DIR/shift-by-8.c" -o "$WORK/s8.o"; link s8 "$WORK/s8.o" "$WORK/rt.o"
 check shift-by-8 "$(run s8.com S8.TXT)" "13312 18 65410 13330 18"
 
+# constant shift/rotate by more than 8 (byte op + residual; rotate flips direction)
+"$CLANG" "${cflags[@]}" "$DIR/shift-large.c" -o "$WORK/slrg.o"; link slrg "$WORK/slrg.o" "$WORK/rt.o"
+check shift-large "$(run slrg.com SL.TXT)" "26624 16384 2 65520 16675 18050 132"
+
 exit $FAILED

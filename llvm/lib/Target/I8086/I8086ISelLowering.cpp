@@ -106,8 +106,37 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   setOperationAction(ISD::VAEND, MVT::Other, Expand);
   setOperationAction(ISD::VACOPY, MVT::Other, Expand);
 
+  // A constant rotate by more than half the width is a shorter rotate in the
+  // opposite direction (rol x,12 == ror x,4; for bytes rol x,6 == ror x,2).
+  setTargetDAGCombine({ISD::ROTL, ISD::ROTR});
+
   setMinFunctionAlignment(Align(1));
   setMaxAtomicSizeInBitsSupported(0);
+}
+
+SDValue I8086TargetLowering::PerformDAGCombine(SDNode *N,
+                                               DAGCombinerInfo &DCI) const {
+  unsigned Opc = N->getOpcode();
+  if (Opc != ISD::ROTL && Opc != ISD::ROTR)
+    return SDValue();
+
+  auto *C = dyn_cast<ConstantSDNode>(N->getOperand(1));
+  if (!C)
+    return SDValue();
+
+  EVT VT = N->getValueType(0);
+  unsigned Bits = VT.getSizeInBits();
+  unsigned Amt = C->getZExtValue() & (Bits - 1);
+  // Amounts in the lower half (0..Bits/2) are already the cheap ones; only flip
+  // direction for the upper half (e.g. 9..15 for i16, 5..7 for i8).
+  if (Amt <= Bits / 2)
+    return SDValue();
+
+  unsigned NewOpc = Opc == ISD::ROTL ? ISD::ROTR : ISD::ROTL;
+  SDLoc dl(N);
+  SDValue NewAmt =
+      DCI.DAG.getConstant(Bits - Amt, dl, N->getOperand(1).getValueType());
+  return DCI.DAG.getNode(NewOpc, dl, VT, N->getOperand(0), NewAmt);
 }
 
 SDValue I8086TargetLowering::LowerOperation(SDValue Op,
@@ -545,27 +574,55 @@ static MachineBasicBlock *emitShift(MachineInstr &MI, MachineBasicBlock *BB) {
   return BB;
 }
 
-// A 16-bit shift/rotate by 8 done as byte moves through AX (see the pseudos):
+// A 16-bit shift/rotate by 8..15 done as a byte op through AX plus a residual
+// shift of 0..7 (see the pseudos):
 //   shl -> mov ah,al; mov al,0    srl -> mov al,ah; mov ah,0
-//   sar -> mov al,ah; cbw         rol/ror (byte swap) -> xchg al,ah
-static MachineBasicBlock *emitShiftBy8(MachineInstr &MI,
-                                       MachineBasicBlock *BB) {
+//   sar -> mov al,ah; cbw         rol/ror by 8 (byte swap) -> xchg al,ah
+static MachineBasicBlock *emitShiftHi(MachineInstr &MI,
+                                      MachineBasicBlock *BB) {
   const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
+  const TargetRegisterInfo &TRI =
+      *BB->getParent()->getSubtarget().getRegisterInfo();
   DebugLoc dl = MI.getDebugLoc();
+  unsigned Opc = MI.getOpcode();
   Register Dst = MI.getOperand(0).getReg();
   Register Src = MI.getOperand(1).getReg();
+  bool Rotate = Opc == I8086::Rol16by8 || Opc == I8086::Ror16by8;
+  unsigned Extra = Rotate ? 0 : MI.getOperand(2).getImm(); // residual, 0..7
 
+  // The CL shift/rotate opcode for the flags fallback and the >2 residual.
+  unsigned ClOpc, B1Opc = 0;
+  switch (Opc) {
+  case I8086::Shl16Hi:  ClOpc = I8086::SHL16CL; B1Opc = I8086::SHL16b1; break;
+  case I8086::Shr16Hi:  ClOpc = I8086::SHR16CL; B1Opc = I8086::SHR16b1; break;
+  case I8086::Sar16Hi:  ClOpc = I8086::SAR16CL; B1Opc = I8086::SAR16b1; break;
+  case I8086::Rol16by8: ClOpc = I8086::ROL16CL; break;
+  case I8086::Ror16by8: ClOpc = I8086::ROR16CL; break;
+  default: llvm_unreachable("unexpected shift-hi pseudo");
+  }
+
+  // The byte-move sequence leaves FLAGS untouched, so if the shift's flags are
+  // actually consumed (e.g. a future shr+jz), fall back to the flag-setting CL
+  // form.  (Today the shift's flags are always dead, so this never triggers.)
+  if (!MI.registerDefIsDead(I8086::FLAGS, &TRI)) {
+    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::CL).addImm(8 + Extra);
+    BuildMI(*BB, MI, dl, TII.get(ClOpc), Dst).addReg(Src);
+    MI.eraseFromParent();
+    return BB;
+  }
+
+  // Byte op = shift/rotate by 8, through AX.
   BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::AX).addReg(Src);
-  switch (MI.getOpcode()) {
-  case I8086::Shl16by8:
+  switch (Opc) {
+  case I8086::Shl16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AH).addReg(I8086::AL);
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AL).addImm(0);
     break;
-  case I8086::Shr16by8:
+  case I8086::Shr16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AH).addImm(0);
     break;
-  case I8086::Sar16by8:
+  case I8086::Sar16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
     BuildMI(*BB, MI, dl, TII.get(I8086::CBW));
     break;
@@ -577,9 +634,19 @@ static MachineBasicBlock *emitShiftBy8(MachineInstr &MI,
         .addReg(I8086::AL, RegState::ImplicitDefine)
         .addReg(I8086::AH, RegState::ImplicitDefine);
     break;
-  default:
-    llvm_unreachable("unexpected shift-by-8 pseudo");
   }
+
+  // Residual shift by Extra (shifts only): by-1 for 1/2, CL for 3..7.
+  if (!Rotate && Extra) {
+    if (Extra <= 2) {
+      for (unsigned I = 0; I != Extra; ++I)
+        BuildMI(*BB, MI, dl, TII.get(B1Opc), I8086::AX).addReg(I8086::AX);
+    } else {
+      BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::CL).addImm(Extra);
+      BuildMI(*BB, MI, dl, TII.get(ClOpc), I8086::AX).addReg(I8086::AX);
+    }
+  }
+
   BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), Dst).addReg(I8086::AX);
   MI.eraseFromParent();
   return BB;
@@ -639,10 +706,10 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
       Opc == I8086::Rol16 || Opc == I8086::Ror16)
     return emitShift(MI, BB);
 
-  if (Opc == I8086::Shl16by8 || Opc == I8086::Shr16by8 ||
-      Opc == I8086::Sar16by8 || Opc == I8086::Rol16by8 ||
+  if (Opc == I8086::Shl16Hi || Opc == I8086::Shr16Hi ||
+      Opc == I8086::Sar16Hi || Opc == I8086::Rol16by8 ||
       Opc == I8086::Ror16by8)
-    return emitShiftBy8(MI, BB);
+    return emitShiftHi(MI, BB);
 
   if (Opc == I8086::UMULLOHI16 || Opc == I8086::SMULLOHI16 ||
       Opc == I8086::UDIVREM16 || Opc == I8086::SDIVREM16)

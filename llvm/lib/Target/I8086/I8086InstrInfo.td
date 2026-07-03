@@ -790,22 +790,29 @@ let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [AX] in
 def MOVSX16r8 : I8086Pseudo<(outs GR16:$dst), (ins GR8:$src), "#MOVSX16r8",
                             [(set GR16:$dst, (sext GR8:$src))]>;
 
-// A 16-bit shift/rotate by 8 is a byte-register move -- vastly faster than the
-// CL form (a shift by 8 is 8+4*8 = 40 cycles).  The custom inserter brings the
-// value through AX and does the byte ops (mov ah,al / xchg al,ah / cbw / ...),
-// so the allocator moves it to AX if it was elsewhere -- still far cheaper.
+// A 16-bit shift/rotate by 8..15 is a byte op plus a residual shift of 0..7 --
+// vastly faster than the CL form (shift-by-CL is 8+4*count cycles).  The custom
+// inserter brings the value through AX, does the byte op (mov ah,al / xchg al,ah
+// / cbw / ...), then the small residual shift.  $extra = count - 8.
+def ShHiExtra : SDNodeXForm<imm, [{
+  return CurDAG->getTargetConstant(N->getZExtValue() - 8, SDLoc(N), MVT::i8);
+}]>;
+def shamt8to15 : PatLeaf<(i8 imm), [{
+  int64_t V = N->getZExtValue();
+  return V >= 8 && V <= 15;
+}], ShHiExtra>;
 let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
-  def Shl16by8 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src), "#Shl16by8",
-                             [(set GR16:$dst, (shl GR16:$src, (i8 8)))]>;
-  def Shr16by8 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src), "#Shr16by8",
-                             [(set GR16:$dst, (srl GR16:$src, (i8 8)))]>;
-  def Sar16by8 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src), "#Sar16by8",
-                             [(set GR16:$dst, (sra GR16:$src, (i8 8)))]>;
+  def Shl16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Shl16Hi", []>;
+  def Shr16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Shr16Hi", []>;
+  def Sar16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Sar16Hi", []>;
   def Rol16by8 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src), "#Rol16by8",
                              [(set GR16:$dst, (rotl GR16:$src, (i8 8)))]>;
   def Ror16by8 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src), "#Ror16by8",
                              [(set GR16:$dst, (rotr GR16:$src, (i8 8)))]>;
 }
+def : Pat<(shl GR16:$x, shamt8to15:$n), (Shl16Hi GR16:$x, shamt8to15:$n)>;
+def : Pat<(srl GR16:$x, shamt8to15:$n), (Shr16Hi GR16:$x, shamt8to15:$n)>;
+def : Pat<(sra GR16:$x, shamt8to15:$n), (Sar16Hi GR16:$x, shamt8to15:$n)>;
 // Result truncated to a byte (the high byte is dead): just take the high byte,
 // with no zeroing or sign extension.
 def : Pat<(i8 (trunc (srl GR16:$x, (i8 8)))), (EXTRACT_SUBREG GR16:$x, sub_8bit_hi)>;
