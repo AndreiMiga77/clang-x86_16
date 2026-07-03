@@ -1,4 +1,4 @@
-//===-- I8086FixupByteMask.cpp - Byte-mask AND -> XOR peephole ------------===//
+//===-- I8086FixupByteMask.cpp - Byte-granularity AND rewrites ------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -6,14 +6,16 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// A masking `and reg, 0x00FF` (zero-extend a byte) or `and reg, 0xFF00` is, when
-// the register lives in AX/BX/CX/DX, just clearing one 8-bit half of the word.
-// The 8086 can do that with a two-byte `xor <half>,<half>` instead of a 3-or-4
-// byte immediate AND.  Whether the value is in a byte-addressable register is
-// only known after register allocation, and this rewrite drops the AND's flag
-// result, so it runs post-RA and only when those flags are dead.  Registers
-// without a byte subregister (SI/DI/BP) keep the plain AND, which is why the
-// isel pattern for `and reg,0xFF` is left in place.
+// Post-RA pass that rewrites byte-granularity operations once physical
+// registers are known.  Currently it turns a masking `and reg,0x00FF` /
+// `and reg,0xFF00` into a byte-clearing `xor <hi>,<hi>` / `xor <lo>,<lo>` when
+// the register has a byte half (AX/BX/CX/DX) and the AND's flags are dead (2
+// bytes vs 3-4).  (This is where byte-level shift lowerings will live too.)
+//
+// Runs in addPreEmitPass, before branch relaxation, so the sizes it changes are
+// final when branch offsets are computed.  It runs before the accumulator
+// short-form pass so `and ax,0xFF` becomes the 2-byte `xor ah,ah` rather than
+// the 3-byte accumulator AND.
 //
 //===----------------------------------------------------------------------===//
 
@@ -41,7 +43,7 @@ public:
   }
 
   StringRef getPassName() const override {
-    return "I8086 byte-mask AND->XOR peephole";
+    return "I8086 byte-mask rewrites";
   }
 };
 } // namespace
@@ -50,8 +52,7 @@ char I8086FixupByteMask::ID = 0;
 
 bool I8086FixupByteMask::runOnMachineFunction(MachineFunction &MF) {
   const I8086InstrInfo &TII = *MF.getSubtarget<I8086Subtarget>().getInstrInfo();
-  const TargetRegisterInfo &TRI =
-      *MF.getSubtarget().getRegisterInfo();
+  const TargetRegisterInfo &TRI = *MF.getSubtarget().getRegisterInfo();
   bool Changed = false;
 
   for (MachineBasicBlock &MBB : MF) {

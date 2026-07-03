@@ -347,6 +347,37 @@ def TEST8mi  : I8086Inst<0xF6, MRM0m, Imm8,  (outs), (ins mem8e:$dst, i8imm:$imm
 def TEST16mi : I8086Inst<0xF7, MRM0m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), "test\t$dst, $imm">;
 
 //===----------------------------------------------------------------------===//
+// Accumulator (AL/AX) short forms.  AL/AX is implicit in the opcode (RawFrm),
+// so the register operand is not encoded: `<op> al,imm8` is 2 bytes and
+// `<op> ax,imm16` 3 bytes -- one shorter than the ModRM r/m,imm forms.  The
+// AREG8/AREG16 single-register operand classes are subclasses of GR8/GR16, so
+// the assembler prefers these when the destination is AL/AX.
+//===----------------------------------------------------------------------===//
+
+multiclass AccArith<string m, bits<8> op, list<Register> uses = []> {
+  let Defs = [FLAGS], Uses = uses, Constraints = "$src1 = $dst" in {
+    def 8i  : I8086Inst<op,         RawFrm, Imm8,  (outs AREG8:$dst),
+                        (ins AREG8:$src1, i8imm:$imm),  m#"\t$dst, $imm">;
+    def 16i : I8086Inst<!add(op,1), RawFrm, Imm16, (outs AREG16:$dst),
+                        (ins AREG16:$src1, i16imm:$imm), m#"\t$dst, $imm">;
+  }
+}
+defm ADD : AccArith<"add", 0x04>;
+defm OR  : AccArith<"or",  0x0C>;
+defm ADC : AccArith<"adc", 0x14, [FLAGS]>;
+defm SBB : AccArith<"sbb", 0x1C, [FLAGS]>;
+defm AND : AccArith<"and", 0x24>;
+defm SUB : AccArith<"sub", 0x2C>;
+defm XOR : AccArith<"xor", 0x34>;
+
+let Defs = [FLAGS] in {
+  def CMP8i   : I8086Inst<0x3C, RawFrm, Imm8,  (outs), (ins AREG8:$src1,  i8imm:$imm),  "cmp\t$src1, $imm">;
+  def CMP16i  : I8086Inst<0x3D, RawFrm, Imm16, (outs), (ins AREG16:$src1, i16imm:$imm), "cmp\t$src1, $imm">;
+  def TEST8i  : I8086Inst<0xA8, RawFrm, Imm8,  (outs), (ins AREG8:$src1,  i8imm:$imm),  "test\t$src1, $imm">;
+  def TEST16i : I8086Inst<0xA9, RawFrm, Imm16, (outs), (ins AREG16:$src1, i16imm:$imm), "test\t$src1, $imm">;
+}
+
+//===----------------------------------------------------------------------===//
 // INC / DEC / NOT / NEG / MUL / IMUL / DIV / IDIV.
 //===----------------------------------------------------------------------===//
 
