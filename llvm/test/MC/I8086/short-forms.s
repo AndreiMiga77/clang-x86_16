@@ -41,6 +41,15 @@ cmp al, 7
 // CHECK: test ax, 300 {{.*}}encoding: [0xa9,0x2c,0x01]
 test ax, 300
 
+// MOV immediate into a register uses B0-BF, never the C6/C7 register-direct form.
+// CHECK: mov ax, 5 {{.*}}encoding: [0xb8,0x05,0x00]
+mov ax, 5
+// CHECK: mov cl, 3 {{.*}}encoding: [0xb1,0x03]
+mov cl, 3
+// C6/C7 requires an explicit memory operand.
+// CHECK: mov [bx], 5 {{.*}}encoding: [0xc7,0x07,0x05,0x00]
+mov word ptr [bx], 5
+
 // MOV moffs (accumulator <-> [disp16]).
 // CHECK: mov ax, [4660] {{.*}}encoding: [0xa1,0x34,0x12]
 mov ax, [0x1234]

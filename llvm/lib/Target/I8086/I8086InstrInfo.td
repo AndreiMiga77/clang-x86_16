@@ -183,9 +183,14 @@ def MOV8ri  : I8086Inst<0xB0, AddRegFrm, Imm8,  (outs GR8:$dst),  (ins i8imm:$im
 def MOV16ri : I8086Inst<0xB8, AddRegFrm, Imm16, (outs GR16:$dst), (ins i16imm:$imm),
                         "mov\t$dst, $imm", [(set GR16:$dst, imm:$imm)]>;
 
-// MOV r/m, imm  (opcode C6/C7 /0).  Store-immediate patterns deferred.
-def MOV8mi  : I8086Inst<0xC6, MRM0m, Imm8,  (outs), (ins mem8e:$dst, i8imm:$imm),   "mov\t$dst, $imm">;
-def MOV16mi : I8086Inst<0xC7, MRM0m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), "mov\t$dst, $imm">;
+// MOV r/m, imm  (opcode C6/C7 /0).  These take a *memory* operand only (mem8e/
+// mem16e), so C6/C7 is never emitted with a register operand -- a register
+// destination always uses the shorter B0-BF form above.  The store-immediate
+// pattern folds `mov reg,imm; mov [mem],reg` into a single instruction.
+def MOV8mi  : I8086Inst<0xC6, MRM0m, Imm8,  (outs), (ins mem8e:$dst, i8imm:$imm),
+                        "mov\t$dst, $imm", [(store (i8 imm:$imm), addr:$dst)]>;
+def MOV16mi : I8086Inst<0xC7, MRM0m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm),
+                        "mov\t$dst, $imm", [(store (i16 imm:$imm), addr:$dst)]>;
 
 // MOV involving segment registers (8C / 8E).
 def MOV16rs : I8086Inst<0x8C, MRMDestReg, NoImm, (outs), (ins GR16:$dst, SEGR:$src), "mov\t$dst, $src">;
