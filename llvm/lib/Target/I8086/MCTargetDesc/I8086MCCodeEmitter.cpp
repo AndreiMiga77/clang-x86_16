@@ -257,9 +257,22 @@ void I8086MCCodeEmitter::encodeInstruction(const MCInst &MI,
     return;
   }
 
-  // Trailing immediate (always the last logical operand when present).
-  if (ImmType != I8086II::NoImm)
-    encodeImm(MI, Ops.back(), ImmType, CB, Fixups);
+  // The immediate is normally the last logical operand, but the moffs store form
+  // (MOV [disp16], al/ax) puts its displacement first and the (implicit)
+  // accumulator register last.  There is exactly one non-register operand -- the
+  // immediate -- so emit that one.  Ordinary instructions already have the
+  // immediate last and non-register, and RawFrm never carries a memory operand,
+  // so this is equivalent to Ops.back() for them.
+  if (ImmType != I8086II::NoImm) {
+    unsigned ImmOp = Ops.back();
+    if (MI.getOperand(ImmOp).isReg())
+      for (unsigned O : Ops)
+        if (!MI.getOperand(O).isReg()) {
+          ImmOp = O;
+          break;
+        }
+    encodeImm(MI, ImmOp, ImmType, CB, Fixups);
+  }
 }
 
 MCCodeEmitter *llvm::createI8086MCCodeEmitter(const MCInstrInfo &MCII,

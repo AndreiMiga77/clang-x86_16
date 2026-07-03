@@ -75,6 +75,17 @@ public:
   // is required (e.g. memory + immediate, or unary memory operands).
   bool isMem8Explicit() const { return Kind == k_Mem && Mem.Size == 1; }
   bool isMem16Explicit() const { return Kind == k_Mem && Mem.Size == 2; }
+  // A bare direct address `[disp16]` with no base or index register, for the
+  // accumulator moffs forms (MOV AL/AX <-> [disp16]).  Split by size so each is
+  // a subclass of the corresponding Mem{8,16} class (the assembler then prefers
+  // the shorter moffs form over the ModRM form).  Mem.Seg is excluded only until
+  // the emitter learns to emit the segment prefix for these RawFrm forms; moffs
+  // itself allows a segment override.
+  bool isAbsMem() const {
+    return Kind == k_Mem && !Mem.Base && !Mem.Index && !Mem.Seg;
+  }
+  bool isAbsMem8() const { return isAbsMem() && (Mem.Size == 0 || Mem.Size == 1); }
+  bool isAbsMem16() const { return isAbsMem() && (Mem.Size == 0 || Mem.Size == 2); }
   bool isImmOne() const {
     if (Kind != k_Imm)
       return false;

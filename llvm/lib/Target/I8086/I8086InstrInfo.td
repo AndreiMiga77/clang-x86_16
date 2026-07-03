@@ -72,6 +72,23 @@ def AnyMemAsmOperand : AsmOperandClass { let Name = "AnyMem"; let RenderMethod =
 // operand implies the access width.
 def Mem8ExpAsmOperand  : AsmOperandClass { let Name = "Mem8Exp";  let RenderMethod = "addMemOperands"; let PredicateMethod = "isMem8Explicit"; }
 def Mem16ExpAsmOperand : AsmOperandClass { let Name = "Mem16Exp"; let RenderMethod = "addMemOperands"; let PredicateMethod = "isMem16Explicit"; }
+
+// A bare direct address `[disp16]` for the accumulator moffs forms.  Modeled as
+// a full memory operand (same base/index/disp/seg layout and addMemOperands
+// rendering as the ordinary mem operands) so it is a proper subclass of the
+// Mem{8,16} classes -- the assembler then prefers the shorter moffs form -- and
+// so the codegen rewrite is a plain in-place opcode swap.  Only the 16-bit
+// displacement is encoded; RawFrm emits no ModRM.
+def AbsMem8AsmOperand  : AsmOperandClass {
+  let Name = "AbsMem8";  let PredicateMethod = "isAbsMem8";
+  let RenderMethod = "addMemOperands"; let SuperClasses = [Mem8AsmOperand];
+}
+def AbsMem16AsmOperand : AsmOperandClass {
+  let Name = "AbsMem16"; let PredicateMethod = "isAbsMem16";
+  let RenderMethod = "addMemOperands"; let SuperClasses = [Mem16AsmOperand];
+}
+def absmem8  : I8086MemOperand<AbsMem8AsmOperand>;
+def absmem16 : I8086MemOperand<AbsMem16AsmOperand>;
 def mem8   : I8086MemOperand<Mem8AsmOperand>;
 def mem16  : I8086MemOperand<Mem16AsmOperand>;
 def anymem : I8086MemOperand<AnyMemAsmOperand>;
@@ -147,6 +164,18 @@ def MOV8rm  : I8086Inst<0x8A, MRMSrcMem, NoImm, (outs GR8:$dst),  (ins mem8:$src
                         "mov\t$dst, $src", [(set GR8:$dst, (load addr:$src))]>;
 def MOV16rm : I8086Inst<0x8B, MRMSrcMem, NoImm, (outs GR16:$dst), (ins mem16:$src),
                         "mov\t$dst, $src", [(set GR16:$dst, (load addr:$src))]>;
+
+// Accumulator <-> direct memory (moffs): AL/AX to/from a bare [disp16] address.
+// 3 bytes (opcode + disp16) versus 4 for the ModRM form; selected for codegen by
+// the I8086CompactEncoding pass and preferred by the assembler.
+let mayLoad = 1 in {
+  def MOV8ao  : I8086Inst<0xA0, RawFrm, Imm16, (outs AREG8:$dst),  (ins absmem8:$src),  "mov\t$dst, $src">;
+  def MOV16ao : I8086Inst<0xA1, RawFrm, Imm16, (outs AREG16:$dst), (ins absmem16:$src), "mov\t$dst, $src">;
+}
+let mayStore = 1 in {
+  def MOV8oa  : I8086Inst<0xA2, RawFrm, Imm16, (outs), (ins absmem8:$dst,  AREG8:$src),  "mov\t$dst, $src">;
+  def MOV16oa : I8086Inst<0xA3, RawFrm, Imm16, (outs), (ins absmem16:$dst, AREG16:$src), "mov\t$dst, $src">;
+}
 
 // MOV reg, imm  (opcode B0+r / B8+r).
 def MOV8ri  : I8086Inst<0xB0, AddRegFrm, Imm8,  (outs GR8:$dst),  (ins i8imm:$imm),

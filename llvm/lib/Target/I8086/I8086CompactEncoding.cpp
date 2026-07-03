@@ -73,12 +73,45 @@ static unsigned accumulatorForm(unsigned Opc) {
   }
 }
 
+// A MOV between AL/AX and a bare direct address `[disp16]` (no base/index/seg)
+// can use the moffs form (0xA0..0xA3), one byte shorter than the ModRM form.
+// The moffs operand has the same (base,index,disp,seg) layout as the ordinary
+// mem operand, so this is a plain in-place opcode swap.
+static bool fixupMovMoffs(MachineInstr &MI, const I8086InstrInfo &TII) {
+  unsigned Opc = MI.getOpcode();
+  bool Load = Opc == I8086::MOV8rm || Opc == I8086::MOV16rm;
+  bool Store = Opc == I8086::MOV8mr || Opc == I8086::MOV16mr;
+  if (!Load && !Store)
+    return false;
+  bool Is16 = Opc == I8086::MOV16rm || Opc == I8086::MOV16mr;
+
+  // Memory operand (base, index, disp, seg): after the dst for a load, before
+  // the src for a store.
+  unsigned M = Load ? 1 : 0;
+  if (MI.getOperand(M).getReg() || MI.getOperand(M + 1).getReg() ||
+      MI.getOperand(M + 3).getReg())
+    return false; // has a base/index/segment override: not a bare address
+  Register Acc = Is16 ? I8086::AX : I8086::AL;
+  Register Reg = Load ? MI.getOperand(0).getReg() : MI.getOperand(M + 4).getReg();
+  if (Reg != Acc)
+    return false;
+
+  unsigned NewOpc = Load ? (Is16 ? I8086::MOV16ao : I8086::MOV8ao)
+                         : (Is16 ? I8086::MOV16oa : I8086::MOV8oa);
+  MI.setDesc(TII.get(NewOpc));
+  return true;
+}
+
 bool I8086CompactEncoding::runOnMachineFunction(MachineFunction &MF) {
   const I8086InstrInfo &TII = *MF.getSubtarget<I8086Subtarget>().getInstrInfo();
   bool Changed = false;
 
   for (MachineBasicBlock &MBB : MF) {
-    for (MachineInstr &MI : MBB) {
+    for (MachineInstr &MI : llvm::make_early_inc_range(MBB)) {
+      if (fixupMovMoffs(MI, TII)) {
+        Changed = true;
+        continue;
+      }
       unsigned Acc = accumulatorForm(MI.getOpcode());
       if (!Acc)
         continue;
