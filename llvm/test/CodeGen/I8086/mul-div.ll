@@ -13,7 +13,10 @@ define i16 @mul16(i16 %a, i16 %b) {
   ret i16 %r
 }
 
+; The DX:AX dividend is zero-extended with xor (3 cycles / 2 bytes vs 4 / 3 for
+; mov ,0); the following div clobbers FLAGS, so flags are dead here.
 ; CHECK-LABEL: udiv16:
+; CHECK: xor dx, dx
 ; CHECK: div cx
 ; CHECK-NOT: call
 define i16 @udiv16(i16 %a, i16 %b) {

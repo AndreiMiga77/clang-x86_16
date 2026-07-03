@@ -9,10 +9,10 @@ target triple = "i8086"
 
 declare i16 @llvm.fshl.i16(i16, i16, i16)
 
-; shl by 8: high := low, low := 0.
+; shl by 8: high := low, low := 0 (zeroed with xor, 3 cycles vs 4; flags dead).
 ; CHECK-LABEL: shl8:
 ; CHECK: mov ah, al
-; CHECK: mov al, 0
+; CHECK: xor al, al
 ; CHECK-NOT: cl
 define i16 @shl8(i16 %x) {
   %y = xor i16 %x, 4660
@@ -20,10 +20,10 @@ define i16 @shl8(i16 %x) {
   ret i16 %r
 }
 
-; srl by 8: low := high, high := 0.
+; srl by 8: low := high, high := 0 (zeroed with xor).
 ; CHECK-LABEL: shr8:
 ; CHECK: mov al, ah
-; CHECK: mov ah, 0
+; CHECK: xor ah, ah
 ; CHECK-NOT: cl
 define i16 @shr8(i16 %x) {
   %y = xor i16 %x, 4660
@@ -53,7 +53,7 @@ define i16 @rol8(i16 %x) {
 
 ; (u8)(x >> 8): just the high byte, no zeroing.
 ; CHECK-LABEL: shr8trunc:
-; CHECK-NOT: mov ah, 0
+; CHECK-NOT: xor ah, ah
 ; CHECK-NOT: cl
 define i8 @shr8trunc(i16 %x) {
   %y = xor i16 %x, 4660
@@ -67,7 +67,7 @@ define i8 @shr8trunc(i16 %x) {
 ; shl by 9 = (hi:=lo, lo:=0) then one shl-by-1.
 ; CHECK-LABEL: shl9:
 ; CHECK: mov ah, al
-; CHECK: mov al, 0
+; CHECK: xor al, al
 ; CHECK: shl ax, 1
 ; CHECK-NOT: shl ax, 1
 define i16 @shl9(i16 %x) {
@@ -79,7 +79,7 @@ define i16 @shl9(i16 %x) {
 ; shl by 12 = byte op then residual shift of 4 via CL.
 ; CHECK-LABEL: shl12:
 ; CHECK: mov ah, al
-; CHECK: mov al, 0
+; CHECK: xor al, al
 ; CHECK: mov cl, 4
 ; CHECK: shl ax, cl
 define i16 @shl12(i16 %x) {

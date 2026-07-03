@@ -616,11 +616,19 @@ static MachineBasicBlock *emitShiftHi(MachineInstr &MI,
   switch (Opc) {
   case I8086::Shl16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AH).addReg(I8086::AL);
-    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AL).addImm(0);
+    // Zero with xor (3 cycles) rather than mov ,0 (4); FLAGS is dead here.
+    // xor r,r is a zeroing idiom: mark the reads undef (no real dependency).
+    BuildMI(*BB, MI, dl, TII.get(I8086::XOR8rr), I8086::AL)
+        .addReg(I8086::AL, RegState::Undef)
+        .addReg(I8086::AL, RegState::Undef);
     break;
   case I8086::Shr16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
-    BuildMI(*BB, MI, dl, TII.get(I8086::MOV8ri), I8086::AH).addImm(0);
+    // Zero with xor (3 cycles) rather than mov ,0 (4); FLAGS is dead here.
+    // xor r,r is a zeroing idiom: mark the reads undef (no real dependency).
+    BuildMI(*BB, MI, dl, TII.get(I8086::XOR8rr), I8086::AH)
+        .addReg(I8086::AH, RegState::Undef)
+        .addReg(I8086::AH, RegState::Undef);
     break;
   case I8086::Sar16Hi:
     BuildMI(*BB, MI, dl, TII.get(I8086::MOV8rr), I8086::AL).addReg(I8086::AH);
@@ -675,8 +683,12 @@ static MachineBasicBlock *emitMulDiv(MachineInstr &MI, MachineBasicBlock *BB) {
     InstOpc = I8086::IMUL16i;
     break;
   case I8086::UDIVREM16:
-    // Zero-extend AX into the DX:AX dividend.
-    BuildMI(*BB, MI, dl, TII.get(I8086::MOV16ri), I8086::DX).addImm(0);
+    // Zero-extend AX into the DX:AX dividend.  xor is 3 cycles / 2 bytes vs 4 / 3
+    // for mov ,0; the following DIV clobbers FLAGS, so flags are dead here.  xor
+    // r,r is a zeroing idiom, so the reads are undef (DX is not yet defined).
+    BuildMI(*BB, MI, dl, TII.get(I8086::XOR16rr), I8086::DX)
+        .addReg(I8086::DX, RegState::Undef)
+        .addReg(I8086::DX, RegState::Undef);
     InstOpc = I8086::DIV16i;
     break;
   case I8086::SDIVREM16:
