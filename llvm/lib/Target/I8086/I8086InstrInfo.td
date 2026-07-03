@@ -718,8 +718,10 @@ let isCodeGenOnly = 1, Constraints = "$src1 = $dst", Defs = [FLAGS] in {
 }
 
 // Shift pseudos: EmitInstrWithCustomInserter copies the count into CL and emits
-// the shift-by-CL instruction above.
-let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
+// the shift-by-CL instruction above.  The expansion clobbers CL, so it must be
+// declared here: the custom inserter runs during ISel, and the isel scheduler
+// relies on this Defs list to serialize any other live CL/CX value correctly.
+let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [CL, FLAGS] in {
   def Shl8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Shl8",  [(set GR8:$dst,  (shl GR8:$src, GR8:$amt))]>;
   def Shr8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Shr8",  [(set GR8:$dst,  (srl GR8:$src, GR8:$amt))]>;
   def Sar8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Sar8",  [(set GR8:$dst,  (sra GR8:$src, GR8:$amt))]>;
@@ -801,7 +803,10 @@ def shamt8to15 : PatLeaf<(i8 imm), [{
   int64_t V = N->getZExtValue();
   return V >= 8 && V <= 15;
 }], ShHiExtra>;
-let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
+// The value is brought through AX for the byte op, and the residual shift of
+// 3..7 (or the flags-live fallback) uses CL, so both AX and CL are clobbered and
+// must be declared -- see the note on the shift pseudos above.
+let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [AX, CL, FLAGS] in {
   def Shl16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Shl16Hi", []>;
   def Shr16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Shr16Hi", []>;
   def Sar16Hi : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, i8imm:$extra), "#Sar16Hi", []>;
