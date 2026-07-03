@@ -207,6 +207,12 @@ void I8086InstrInfo::loadRegFromStackSlot(
 // Branch analysis.
 //===----------------------------------------------------------------------===//
 
+// A direct unconditional branch: the short rel8 form (JMP8, the codegen default)
+// or the near rel16 form (JMP16, the branch-relaxation target).
+static bool isUncondDirectBranch(unsigned Opc) {
+  return Opc == I8086::JMP8 || Opc == I8086::JMP16;
+}
+
 unsigned I8086InstrInfo::removeBranch(MachineBasicBlock &MBB,
                                       int *BytesRemoved) const {
   if (BytesRemoved)
@@ -217,7 +223,7 @@ unsigned I8086InstrInfo::removeBranch(MachineBasicBlock &MBB,
     --I;
     if (I->isDebugInstr())
       continue;
-    if (I->getOpcode() != I8086::JMP16 &&
+    if (!isUncondDirectBranch(I->getOpcode()) &&
         getCondFromBranchOpc(I->getOpcode()) == I8086CC::COND_INVALID)
       break;
     if (BytesRemoved)
@@ -256,7 +262,7 @@ bool I8086InstrInfo::analyzeBranch(MachineBasicBlock &MBB,
       return true;
 
     // Unconditional branch.
-    if (I->getOpcode() == I8086::JMP16) {
+    if (isUncondDirectBranch(I->getOpcode())) {
       if (!AllowModify) {
         TBB = I->getOperand(0).getMBB();
         continue;
@@ -308,11 +314,13 @@ unsigned I8086InstrInfo::insertBranch(MachineBasicBlock &MBB,
   if (BytesAdded)
     *BytesAdded = 0;
 
+  // Emit the short rel8 JMP8 optimistically; branch relaxation grows it to the
+  // near rel16 JMP16 (via insertIndirectBranch) if the target is out of range.
   if (Cond.empty()) {
     assert(!FBB && "Unconditional branch with multiple successors!");
-    BuildMI(&MBB, DL, get(I8086::JMP16)).addMBB(TBB);
+    BuildMI(&MBB, DL, get(I8086::JMP8)).addMBB(TBB);
     if (BytesAdded)
-      *BytesAdded += 3; // E9 + rel16
+      *BytesAdded += 2; // EB + rel8
     return 1;
   }
 
@@ -323,9 +331,9 @@ unsigned I8086InstrInfo::insertBranch(MachineBasicBlock &MBB,
     *BytesAdded += 2; // Jcc + rel8
   ++Count;
   if (FBB) {
-    BuildMI(&MBB, DL, get(I8086::JMP16)).addMBB(FBB);
+    BuildMI(&MBB, DL, get(I8086::JMP8)).addMBB(FBB);
     if (BytesAdded)
-      *BytesAdded += 3;
+      *BytesAdded += 2;
     ++Count;
   }
   return Count;
@@ -424,7 +432,7 @@ unsigned I8086InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
 
 MachineBasicBlock *
 I8086InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
-  assert((MI.getOpcode() == I8086::JMP16 ||
+  assert((isUncondDirectBranch(MI.getOpcode()) ||
           getCondFromBranchOpc(MI.getOpcode()) != I8086CC::COND_INVALID) &&
          "expected a direct branch");
   return MI.getOperand(0).getMBB();
@@ -433,12 +441,17 @@ I8086InstrInfo::getBranchDestBlock(const MachineInstr &MI) const {
 bool I8086InstrInfo::isBranchOffsetInRange(unsigned BranchOpc,
                                            int64_t BrOffset) const {
   // The near JMP is rel16 and, thanks to 16-bit wraparound, reaches anywhere in
-  // the 64K segment; conditional Jcc are rel8 only.
+  // the 64K segment; the short JMP8 and the conditional Jcc are rel8.
   if (BranchOpc == I8086::JMP16)
     return true;
-  assert(getCondFromBranchOpc(BranchOpc) != I8086CC::COND_INVALID &&
-         "expected a conditional branch");
-  return isInt<8>(BrOffset);
+  assert((BranchOpc == I8086::JMP8 ||
+          getCondFromBranchOpc(BranchOpc) != I8086CC::COND_INVALID) &&
+         "expected a rel8 branch");
+  // BrOffset is the distance from the branch's start, but the rel8 field is
+  // relative to its end, so account for the 2-byte instruction length.  (Matters
+  // for backward branches near the boundary: an offset of -128 from the start is
+  // -130 from the end, which does not fit.)
+  return isInt<8>(BrOffset - 2);
 }
 
 void I8086InstrInfo::insertIndirectBranch(MachineBasicBlock &MBB,

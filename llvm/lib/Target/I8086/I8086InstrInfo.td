@@ -571,11 +571,16 @@ let isCodeGenOnly = 1 in {
 // Control transfer.
 //===----------------------------------------------------------------------===//
 
-// Unconditional jumps.
+// Unconditional jumps.  The compiler selects the short rel8 JMP8 for `br`;
+// branch relaxation grows it to the near rel16 JMP16 when the target is out of
+// rel8 range.  JMP8 is CodeGenOnly so the assembler keeps emitting the near
+// form for a plain `jmp label` (JMP16), avoiding a matcher ambiguity.
 let isBranch = 1, isTerminator = 1, isBarrier = 1 in {
   def JMP16    : I8086Inst<0xE9, RawFrm, Rel16, (outs), (ins jmptarget:$dst),
+                           "jmp\t$dst">;
+  let isCodeGenOnly = 1 in
+  def JMP8     : I8086Inst<0xEB, RawFrm, Rel8,  (outs), (ins jmptarget:$dst),
                            "jmp\t$dst", [(br bb:$dst)]>;
-  def JMP8     : I8086Inst<0xEB, RawFrm, Rel8,  (outs), (ins brtarget8:$dst),  "jmp\t$dst">;
 }
 let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1 in {
   def JMP16r   : I8086Inst<0xFF, MRM4r, NoImm, (outs), (ins GR16:$dst),
