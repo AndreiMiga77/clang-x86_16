@@ -81,6 +81,19 @@ public:
     const auto *CE = dyn_cast<MCConstantExpr>(Imm);
     return CE && CE->getValue() == 1;
   }
+  // A constant immediate whose 16-bit value equals the sign-extension of its
+  // low byte, i.e. it can be encoded with the compact 0x83 imm8 form.  Symbolic
+  // immediates never qualify (their value is not known here).
+  bool isImmSExti16i8() const {
+    if (Kind != k_Imm)
+      return false;
+    const auto *CE = dyn_cast<MCConstantExpr>(Imm);
+    if (!CE)
+      return false;
+    uint16_t U = static_cast<uint16_t>(CE->getValue());
+    return static_cast<uint16_t>(static_cast<int16_t>(static_cast<int8_t>(U))) ==
+           U;
+  }
 
   StringRef getToken() const {
     assert(Kind == k_Token);

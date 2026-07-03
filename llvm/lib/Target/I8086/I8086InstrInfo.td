@@ -44,6 +44,19 @@ def Imm1AsmOperand : AsmOperandClass {
 }
 def imm1 : Operand<i16> { let ParserMatchClass = Imm1AsmOperand; }
 
+// A 16-bit immediate that fits in a sign-extended byte, for the compact 0x83
+// group (`add/or/adc/sbb/and/sub/xor/cmp r/m16, imm8`).  The AsmOperandClass is
+// a subclass of the generic immediate class so the assembler prefers this
+// (shorter) form when the value fits; larger values fall back to the imm16 form.
+def i16immSExt8 : ImmLeaf<i16, [{ return isInt<8>(Imm); }]>;
+def Imm16i8AsmOperand : AsmOperandClass {
+  let Name = "Imm16i8";
+  let PredicateMethod = "isImmSExti16i8";
+  let RenderMethod = "addImmOperands";
+  let SuperClasses = [ImmAsmOperand];
+}
+def i16i8imm : Operand<i16> { let ParserMatchClass = Imm16i8AsmOperand; }
+
 // Memory operands.  All expand to (base:GR16, index:GR16, disp:i16imm, seg:SEGR).
 class I8086MemOperand<AsmOperandClass c> : Operand<i16> {
   let PrintMethod = "printMemReference";
@@ -221,6 +234,12 @@ multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
                          (outs GR16:$dst), (ins GR16:$src1, i16imm:$imm),
                          m#"\t$dst, $imm",
                          [(set GR16:$dst, (node GR16:$src1, imm:$imm))]>;
+    // Compact sign-extended-imm8 form (opcode 0x83); preferred when the
+    // immediate fits in a byte.
+    def 16ri8 : I8086Inst<0x83, ri, Imm8,
+                          (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$imm),
+                          m#"\t$dst, $imm",
+                          [(set GR16:$dst, (node GR16:$src1, i16immSExt8:$imm))]>;
   }
   // Assembler-only memory forms.
   def 8mr : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   m#"\t$dst, $src">;
@@ -229,6 +248,7 @@ multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
   def 16rm : I8086Inst<!add(base,3), MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), m#"\t$dst, $src">;
   def 8mi : I8086Inst<0x80, mi, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
   def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), m#"\t$dst, $imm">;
+  def 16mi8 : I8086Inst<0x83, mi, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm), m#"\t$dst, $imm">;
 }
 
 // Carry-consuming ALU (ADC/SBB) for the high words of wide add/sub.  Identical
@@ -255,6 +275,10 @@ multiclass BinOpC<string m, bits<8> base, Format ri, Format mi, SDNode node,
                          (outs GR16:$dst), (ins GR16:$src1, i16imm:$imm),
                          m#"\t$dst, $imm",
                          [(set GR16:$dst, (node GR16:$src1, imm:$imm))]>;
+    def 16ri8 : I8086Inst<0x83, ri, Imm8,
+                          (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$imm),
+                          m#"\t$dst, $imm",
+                          [(set GR16:$dst, (node GR16:$src1, i16immSExt8:$imm))]>;
   }
   // Assembler-only memory forms.
   def 8mr : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   m#"\t$dst, $src">;
@@ -263,6 +287,7 @@ multiclass BinOpC<string m, bits<8> base, Format ri, Format mi, SDNode node,
   def 16rm : I8086Inst<!add(base,3), MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), m#"\t$dst, $src">;
   def 8mi : I8086Inst<0x80, mi, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
   def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), m#"\t$dst, $imm">;
+  def 16mi8 : I8086Inst<0x83, mi, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm), m#"\t$dst, $imm">;
 }
 
 defm ADD : BinOp<"add", 0x00, MRM0r, MRM0m, add, 1>;
@@ -278,14 +303,16 @@ defm SBB : BinOpC<"sbb", 0x18, MRM3r, MRM3m, sube, 0>;
 // the low word is a plain ADD/SUB that *produces* the carry (addc/subc), and the
 // high word(s) are ADC/SBB that consume it (adde/sube, handled by the patterns
 // in BinOpC above).  Map the carry-producing low word onto ADD/SUB.
-def : Pat<(addc GR16:$a, GR16:$b), (ADD16rr GR16:$a, GR16:$b)>;
-def : Pat<(addc GR16:$a, imm:$b),  (ADD16ri GR16:$a, imm:$b)>;
-def : Pat<(addc GR8:$a,  GR8:$b),  (ADD8rr  GR8:$a,  GR8:$b)>;
-def : Pat<(addc GR8:$a,  imm:$b),  (ADD8ri  GR8:$a,  imm:$b)>;
-def : Pat<(subc GR16:$a, GR16:$b), (SUB16rr GR16:$a, GR16:$b)>;
-def : Pat<(subc GR16:$a, imm:$b),  (SUB16ri GR16:$a, imm:$b)>;
-def : Pat<(subc GR8:$a,  GR8:$b),  (SUB8rr  GR8:$a,  GR8:$b)>;
-def : Pat<(subc GR8:$a,  imm:$b),  (SUB8ri  GR8:$a,  imm:$b)>;
+def : Pat<(addc GR16:$a, GR16:$b),         (ADD16rr  GR16:$a, GR16:$b)>;
+def : Pat<(addc GR16:$a, i16immSExt8:$b),  (ADD16ri8 GR16:$a, i16immSExt8:$b)>;
+def : Pat<(addc GR16:$a, imm:$b),          (ADD16ri  GR16:$a, imm:$b)>;
+def : Pat<(addc GR8:$a,  GR8:$b),          (ADD8rr   GR8:$a,  GR8:$b)>;
+def : Pat<(addc GR8:$a,  imm:$b),          (ADD8ri   GR8:$a,  imm:$b)>;
+def : Pat<(subc GR16:$a, GR16:$b),         (SUB16rr  GR16:$a, GR16:$b)>;
+def : Pat<(subc GR16:$a, i16immSExt8:$b),  (SUB16ri8 GR16:$a, i16immSExt8:$b)>;
+def : Pat<(subc GR16:$a, imm:$b),          (SUB16ri  GR16:$a, imm:$b)>;
+def : Pat<(subc GR8:$a,  GR8:$b),          (SUB8rr   GR8:$a,  GR8:$b)>;
+def : Pat<(subc GR8:$a,  imm:$b),          (SUB8ri   GR8:$a,  imm:$b)>;
 
 // CMP sets FLAGS without writing a destination.
 let Defs = [FLAGS] in {
@@ -297,6 +324,8 @@ let Defs = [FLAGS] in {
                           "cmp\t$src1, $imm", [(I8086cmp GR8:$src1, imm:$imm)]>;
   def CMP16ri : I8086Inst<0x81, MRM7r, Imm16, (outs), (ins GR16:$src1, i16imm:$imm),
                           "cmp\t$src1, $imm", [(I8086cmp GR16:$src1, imm:$imm)]>;
+  def CMP16ri8 : I8086Inst<0x83, MRM7r, Imm8, (outs), (ins GR16:$src1, i16i8imm:$imm),
+                           "cmp\t$src1, $imm", [(I8086cmp GR16:$src1, i16immSExt8:$imm)]>;
   // Assembler-only memory forms.
   def CMP8mr  : I8086Inst<0x38, MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   "cmp\t$dst, $src">;
   def CMP16mr : I8086Inst<0x39, MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src), "cmp\t$dst, $src">;
@@ -304,6 +333,7 @@ let Defs = [FLAGS] in {
   def CMP16rm : I8086Inst<0x3B, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), "cmp\t$dst, $src">;
   def CMP8mi  : I8086Inst<0x80, MRM7m, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   "cmp\t$dst, $imm">;
   def CMP16mi : I8086Inst<0x81, MRM7m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), "cmp\t$dst, $imm">;
+  def CMP16mi8 : I8086Inst<0x83, MRM7m, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm), "cmp\t$dst, $imm">;
 }
 
 // TEST (group differs: 84/85 for r/m,reg; F6/F7 /0 for r/m,imm).
@@ -320,10 +350,22 @@ def TEST16mi : I8086Inst<0xF7, MRM0m, Imm16, (outs), (ins mem16e:$dst, i16imm:$i
 // INC / DEC / NOT / NEG / MUL / IMUL / DIV / IDIV.
 //===----------------------------------------------------------------------===//
 
-def INC16r : I8086Inst<0x40, AddRegFrm, NoImm, (outs), (ins GR16:$reg), "inc\t$reg">;
-def DEC16r : I8086Inst<0x48, AddRegFrm, NoImm, (outs), (ins GR16:$reg), "dec\t$reg">;
-def INC8r  : I8086Inst<0xFE, MRM0r, NoImm, (outs), (ins GR8:$reg),  "inc\t$reg">;
-def DEC8r  : I8086Inst<0xFE, MRM1r, NoImm, (outs), (ins GR8:$reg),  "dec\t$reg">;
+// INC/DEC: two-address CodeGen forms selecting for +1 / -1 (1 byte for r16,
+// 2 for r8, vs 3 for the 0x83 imm8 form).  Unlike ADD/SUB these leave CF
+// *unchanged*, so they must never stand in for the carry-producing low word of
+// a wide add/sub -- but that word is an addc/subc node (mapped to ADD/SUB) while
+// these match plain add, so there is no overlap.  They still clobber the other
+// arithmetic flags (ZF/SF/OF/AF/PF), hence Defs=[FLAGS].
+let Constraints = "$src1 = $dst", Defs = [FLAGS] in {
+  def INC16r : I8086Inst<0x40, AddRegFrm, NoImm, (outs GR16:$dst), (ins GR16:$src1),
+                         "inc\t$dst", [(set GR16:$dst, (add GR16:$src1, 1))]>;
+  def DEC16r : I8086Inst<0x48, AddRegFrm, NoImm, (outs GR16:$dst), (ins GR16:$src1),
+                         "dec\t$dst", [(set GR16:$dst, (add GR16:$src1, -1))]>;
+  def INC8r  : I8086Inst<0xFE, MRM0r, NoImm, (outs GR8:$dst), (ins GR8:$src1),
+                         "inc\t$dst", [(set GR8:$dst, (add GR8:$src1, 1))]>;
+  def DEC8r  : I8086Inst<0xFE, MRM1r, NoImm, (outs GR8:$dst), (ins GR8:$src1),
+                         "dec\t$dst", [(set GR8:$dst, (add GR8:$src1, -1))]>;
+}
 def INC8m  : I8086Inst<0xFE, MRM0m, NoImm, (outs), (ins mem8e:$mem), "inc\t$mem">;
 def DEC8m  : I8086Inst<0xFE, MRM1m, NoImm, (outs), (ins mem8e:$mem), "dec\t$mem">;
 def INC16m : I8086Inst<0xFF, MRM0m, NoImm, (outs), (ins mem16e:$mem), "inc\t$mem">;
