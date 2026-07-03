@@ -14,7 +14,9 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-cflags=(-target i8086 -ffreestanding -O2 -c)
+# -ffunction-sections lets the linker script put main's section first, so the
+# .COM entry point (offset 0x100) is main regardless of definition order.
+cflags=(-target i8086 -ffreestanding -O2 -ffunction-sections -c)
 # runtime helpers
 "$CLANG" "${cflags[@]}" \
   "$DIR/../../../../../compiler-rt/lib/builtins/i8086_builtins.c" -o "$WORK/rt.o"
@@ -64,5 +66,9 @@ link structs "$WORK/sd.o" "$WORK/sl.o" "$WORK/rt.o"
 check structs "$(run structs.com OUT.TXT)" \
 "use_point=73
 sum_big=100520"
+
+# rotations (native ROL/ROR)
+"$CLANG" "${cflags[@]}" "$DIR/rotate.c" -o "$WORK/r.o"; link rot "$WORK/r.o" "$WORK/rt.o"
+check rotate "$(run rot.com ROT.TXT)" "9025 16675 33"
 
 exit $FAILED

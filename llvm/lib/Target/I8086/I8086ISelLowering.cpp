@@ -51,12 +51,11 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   // i8->i16 sign extension uses CBW via the MOVSX16r8 pseudo (see the .td);
   // zero/any extension are handled by patterns.
 
-  // The 8086 shifts only by 1 or CL.  SHL/SRL/SRA are selected via the Shl*/
-  // Shr*/Sar* custom-inserter pseudos, which move the shift count into CL and
-  // use the shift-by-CL instruction.  Rotates are expanded.
+  // The 8086 shifts and rotates only by 1 or CL.  SHL/SRL/SRA and ROTL/ROTR are
+  // selected via the Shl*/Shr*/Sar*/Rol*/Ror* custom-inserter pseudos, which move
+  // the count into CL and use the shift/rotate-by-CL instruction.  (ROTL/ROTR are
+  // left Legal so the pseudo patterns match instead of the default expansion.)
   for (MVT VT : {MVT::i8, MVT::i16}) {
-    setOperationAction(ISD::ROTL, VT, Expand);
-    setOperationAction(ISD::ROTR, VT, Expand);
     setOperationAction(ISD::CTTZ, VT, Expand);
     setOperationAction(ISD::CTLZ, VT, Expand);
     setOperationAction(ISD::CTPOP, VT, Expand);
@@ -532,7 +531,11 @@ static MachineBasicBlock *emitShift(MachineInstr &MI, MachineBasicBlock *BB) {
   case I8086::Shl16: ClOpc = I8086::SHL16CL; break;
   case I8086::Shr16: ClOpc = I8086::SHR16CL; break;
   case I8086::Sar16: ClOpc = I8086::SAR16CL; break;
-  default: llvm_unreachable("unexpected shift pseudo");
+  case I8086::Rol8:  ClOpc = I8086::ROL8CL;  break;
+  case I8086::Ror8:  ClOpc = I8086::ROR8CL;  break;
+  case I8086::Rol16: ClOpc = I8086::ROL16CL; break;
+  case I8086::Ror16: ClOpc = I8086::ROR16CL; break;
+  default: llvm_unreachable("unexpected shift/rotate pseudo");
   }
   BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::CL)
       .addReg(MI.getOperand(2).getReg());
@@ -591,7 +594,9 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
                                                  MachineBasicBlock *BB) const {
   unsigned Opc = MI.getOpcode();
   if (Opc == I8086::Shl8 || Opc == I8086::Shr8 || Opc == I8086::Sar8 ||
-      Opc == I8086::Shl16 || Opc == I8086::Shr16 || Opc == I8086::Sar16)
+      Opc == I8086::Shl16 || Opc == I8086::Shr16 || Opc == I8086::Sar16 ||
+      Opc == I8086::Rol8 || Opc == I8086::Ror8 ||
+      Opc == I8086::Rol16 || Opc == I8086::Ror16)
     return emitShift(MI, BB);
 
   if (Opc == I8086::UMULLOHI16 || Opc == I8086::SMULLOHI16 ||

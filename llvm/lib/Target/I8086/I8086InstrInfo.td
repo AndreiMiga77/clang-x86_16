@@ -695,6 +695,10 @@ let isCodeGenOnly = 1, Constraints = "$src1 = $dst", Defs = [FLAGS],
   def SHL16CL : I8086Inst<0xD3, MRM4r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shl\t$dst, cl">;
   def SHR16CL : I8086Inst<0xD3, MRM5r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "shr\t$dst, cl">;
   def SAR16CL : I8086Inst<0xD3, MRM7r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "sar\t$dst, cl">;
+  def ROL8CL  : I8086Inst<0xD2, MRM0r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "rol\t$dst, cl">;
+  def ROR8CL  : I8086Inst<0xD2, MRM1r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),  "ror\t$dst, cl">;
+  def ROL16CL : I8086Inst<0xD3, MRM0r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "rol\t$dst, cl">;
+  def ROR16CL : I8086Inst<0xD3, MRM1r, NoImm, (outs GR16:$dst), (ins GR16:$src1), "ror\t$dst, cl">;
 }
 
 // Shift pseudos: EmitInstrWithCustomInserter copies the count into CL and emits
@@ -706,6 +710,10 @@ let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [FLAGS] in {
   def Shl16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Shl16", [(set GR16:$dst, (shl GR16:$src, GR8:$amt))]>;
   def Shr16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Shr16", [(set GR16:$dst, (srl GR16:$src, GR8:$amt))]>;
   def Sar16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Sar16", [(set GR16:$dst, (sra GR16:$src, GR8:$amt))]>;
+  def Rol8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Rol8",  [(set GR8:$dst,  (rotl GR8:$src, GR8:$amt))]>;
+  def Ror8  : I8086Pseudo<(outs GR8:$dst),  (ins GR8:$src, GR8:$amt),  "#Ror8",  [(set GR8:$dst,  (rotr GR8:$src, GR8:$amt))]>;
+  def Rol16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Rol16", [(set GR16:$dst, (rotl GR16:$src, GR8:$amt))]>;
+  def Ror16 : I8086Pseudo<(outs GR16:$dst), (ins GR16:$src, GR8:$amt), "#Ror16", [(set GR16:$dst, (rotr GR16:$src, GR8:$amt))]>;
 }
 
 //===----------------------------------------------------------------------===//
