@@ -56,6 +56,10 @@ FunctionPass *createI8086FixupByteMaskPass();
 // one-byte-shorter accumulator short form.
 FunctionPass *createI8086CompactEncodingPass();
 
+// Post-RA peephole: fold a 3-MOV register swap (through a scratch) into a single
+// XCHG (preferring the 1-byte AX form), freeing the scratch register.
+FunctionPass *createI8086SwapPeepholePass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 

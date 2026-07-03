@@ -26,6 +26,7 @@ add_llvm_target(I8086CodeGen
   I8086MachineFunctionInfo.cpp
   I8086RegisterInfo.cpp
   I8086SelectionDAGInfo.cpp
+  I8086SwapPeephole.cpp
   I8086Subtarget.cpp
   I8086TargetMachine.cpp
 
