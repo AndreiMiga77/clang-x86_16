@@ -217,6 +217,16 @@ def XCHG16rr : I8086Inst<0x87, MRMDestReg, NoImm, (outs), (ins GR16:$dst, GR16:$
 def XCHG8rm  : I8086Inst<0x86, MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),  "xchg\t$src, $dst">;
 def XCHG16rm : I8086Inst<0x87, MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src),"xchg\t$src, $dst">;
 
+// Accumulator short form: `xchg ax, r16` is 0x90+r (1 byte) vs the 0x87 ModRM
+// form (2 bytes).  AX is implicit in the opcode, so the *other* register is what
+// gets encoded -- it must be operand 0 (AddRegFrm encodes operand 0), with AX a
+// fixed AREG16 operand for matching (which makes the assembler prefer this form
+// over XCHG16rr).  The asm string prints AX first ("xchg ax, r16"); the alias
+// accepts the reversed operand order.  `xchg ax, ax` encodes 0x90 (NOP).
+def XCHG16ar : I8086Inst<0x90, AddRegFrm, NoImm, (outs), (ins GR16:$reg, AREG16:$acc),
+                         "xchg\t$acc, $reg">;
+def : InstAlias<"xchg\t$reg, $acc", (XCHG16ar GR16:$reg, AREG16:$acc)>;
+
 def IN8ri  : I8086Inst<0xE4, RawFrm, Imm8, (outs), (ins AREG8:$dst, i8imm:$port),  "in\t$dst, $port">;
 def IN16ri : I8086Inst<0xE5, RawFrm, Imm8, (outs), (ins AREG16:$dst, i8imm:$port), "in\t$dst, $port">;
 def IN8rr  : I8086Inst<0xEC, RawFrm, NoImm, (outs), (ins AREG8:$dst, DREG16:$dx),  "in\t$dst, $dx">;
