@@ -121,6 +121,25 @@ void I8086InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
       .addReg(SrcReg, getKillRegState(KillSrc));
 }
 
+bool I8086InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
+  switch (MI.getOpcode()) {
+  default:
+    return false;
+  case I8086::MOV8r0:
+  case I8086::MOV16r0: {
+    // Materialize 0 as `xor dst, dst` (2 bytes, clobbers FLAGS).
+    bool Is16 = MI.getOpcode() == I8086::MOV16r0;
+    Register Dst = MI.getOperand(0).getReg();
+    const MCInstrDesc &Desc = get(Is16 ? I8086::XOR16rr : I8086::XOR8rr);
+    BuildMI(*MI.getParent(), MI, MI.getDebugLoc(), Desc, Dst)
+        .addReg(Dst, RegState::Undef)
+        .addReg(Dst, RegState::Undef);
+    MI.eraseFromParent();
+    return true;
+  }
+  }
+}
+
 // Add a frame-index memory operand (base=FI, index=none, disp=0, seg=none).
 static void addFrameMemOperand(MachineInstrBuilder &MIB, int FrameIdx) {
   MIB.addFrameIndex(FrameIdx)  // base

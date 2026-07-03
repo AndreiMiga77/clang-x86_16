@@ -91,6 +91,14 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   for (auto Op : {ISD::UMUL_LOHI, ISD::SMUL_LOHI, ISD::UDIVREM, ISD::SDIVREM})
     setOperationAction(Op, MVT::i16, Legal);
 
+  // Wide (i32/i64) add/sub: keep them as glue-carry ADDC/ADDE / SUBC/SUBE so the
+  // type legalizer expands them into an ADD/ADC (SUB/SBB) carry chain rather than
+  // the default cmp-and-branch carry synthesis.  These nodes are not Legal by
+  // default in this LLVM version, so request it explicitly.
+  for (MVT VT : {MVT::i8, MVT::i16})
+    for (auto Op : {ISD::ADDC, ISD::ADDE, ISD::SUBC, ISD::SUBE})
+      setOperationAction(Op, VT, Legal);
+
   setOperationAction(ISD::DYNAMIC_STACKALLOC, MVT::i16, Expand);
   setOperationAction(ISD::STACKSAVE, MVT::Other, Expand);
   setOperationAction(ISD::STACKRESTORE, MVT::Other, Expand);
@@ -369,12 +377,63 @@ SDValue I8086TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
   unsigned NumBytes = CCInfo.getStackSize();
   Chain = DAG.getCALLSEQ_START(Chain, NumBytes, 0, dl);
 
+  // Pre-load the words of any byval aggregate up front.  The pushes below are
+  // glued into one contiguous block, so we cannot slip a load between them; load
+  // everything first (chained off the current Chain) and push the values later.
+  // Each struct is broken into 16-bit words, plus a trailing byte for odd sizes.
+  DenseMap<unsigned, SmallVector<SDValue, 8>> ByValWords;
+  for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
+    if (!Outs[i].Flags.isByVal())
+      continue;
+    SDValue Ptr = OutVals[i];
+    unsigned Size = Outs[i].Flags.getByValSize();
+    SmallVector<SDValue, 8> Words;
+    unsigned Off = 0;
+    auto AddrAt = [&](unsigned O) {
+      return O == 0 ? Ptr
+                    : DAG.getNode(ISD::ADD, dl, MVT::i16, Ptr,
+                                  DAG.getConstant(O, dl, MVT::i16));
+    };
+    for (; Off + 2 <= Size; Off += 2) {
+      SDValue W = DAG.getLoad(MVT::i16, dl, Chain, AddrAt(Off),
+                              MachinePointerInfo());
+      Chain = W.getValue(1);
+      Words.push_back(W);
+    }
+    if (Off < Size) { // trailing odd byte (high byte of the word is padding)
+      SDValue B = DAG.getExtLoad(ISD::EXTLOAD, dl, MVT::i16, Chain, AddrAt(Off),
+                                 MachinePointerInfo(), MVT::i8);
+      Chain = B.getValue(1);
+      Words.push_back(B);
+    }
+    ByValWords[i] = std::move(Words);
+  }
+
   // Push outgoing arguments right-to-left so arg0 ends up at the lowest address
   // (SP is not a ModR/M base, so we cannot store to [sp+off]).  Each PUSH is
   // glued to keep them ordered and immediately before the call.
   SDValue InGlue;
+  auto EmitPush = [&](SDValue Val) {
+    SmallVector<SDValue, 3> PushOps = {Chain, Val};
+    if (InGlue.getNode())
+      PushOps.push_back(InGlue);
+    Chain = DAG.getNode(I8086ISD::PUSH, dl,
+                        DAG.getVTList(MVT::Other, MVT::Glue), PushOps);
+    InGlue = Chain.getValue(1);
+  };
   for (unsigned i = ArgLocs.size(); i-- > 0;) {
     CCValAssign &VA = ArgLocs[i];
+    assert(VA.isMemLoc() && "i8086 passes all arguments on the stack");
+
+    // A byval struct's words were pre-loaded; push them highest-offset first so
+    // word 0 lands at the lowest (last-pushed) address.
+    if (Outs[i].Flags.isByVal()) {
+      const SmallVectorImpl<SDValue> &Words = ByValWords[i];
+      for (unsigned k = Words.size(); k-- > 0;)
+        EmitPush(Words[k]);
+      continue;
+    }
+
     SDValue Arg = OutVals[i];
     switch (VA.getLocInfo()) {
     case CCValAssign::Full:
@@ -391,15 +450,7 @@ SDValue I8086TargetLowering::LowerCall(TargetLowering::CallLoweringInfo &CLI,
     default:
       llvm_unreachable("Unknown loc info!");
     }
-    assert(VA.isMemLoc() && "i8086 passes all arguments on the stack");
-    assert(!Outs[i].Flags.isByVal() && "byval call args not supported yet");
-
-    SmallVector<SDValue, 3> PushOps = {Chain, Arg};
-    if (InGlue.getNode())
-      PushOps.push_back(InGlue);
-    Chain = DAG.getNode(I8086ISD::PUSH, dl,
-                        DAG.getVTList(MVT::Other, MVT::Glue), PushOps);
-    InGlue = Chain.getValue(1);
+    EmitPush(Arg);
   }
 
   if (GlobalAddressSDNode *G = dyn_cast<GlobalAddressSDNode>(Callee))

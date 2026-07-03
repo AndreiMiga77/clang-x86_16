@@ -45,6 +45,8 @@ public:
 
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 
+  bool expandPostRAPseudo(MachineInstr &MI) const override;
+
   // Branch relaxation support (8086 Jcc is rel8-only).
   MachineBasicBlock *getBranchDestBlock(const MachineInstr &MI) const override;
   bool isBranchOffsetInRange(unsigned BranchOpc,

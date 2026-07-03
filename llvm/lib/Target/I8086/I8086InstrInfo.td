@@ -198,26 +198,45 @@ def XLAT  : NullaryInst<0xD7, "xlat">;
 // Arithmetic / logic core group (ADD OR ADC SBB AND SUB XOR CMP).
 //===----------------------------------------------------------------------===//
 
-// Assembler-only form (all 5 addressing variants, no CodeGen patterns).  Used
-// for ADC/SBB, whose carry-chain patterns are added with the i32 expansion.
-multiclass ArithLogic<string m, bits<8> base, Format ri, Format mi> {
-  def 8rr  : I8086Inst<!add(base,0), MRMDestReg, NoImm, (outs), (ins GR8:$dst, GR8:$src),    m#"\t$dst, $src">;
-  def 16rr : I8086Inst<!add(base,1), MRMDestReg, NoImm, (outs), (ins GR16:$dst, GR16:$src),  m#"\t$dst, $src">;
-  def 8mr  : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   m#"\t$dst, $src">;
-  def 16mr : I8086Inst<!add(base,1), MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src), m#"\t$dst, $src">;
-  def 8rm  : I8086Inst<!add(base,2), MRMSrcMem,  NoImm, (outs), (ins GR8:$dst, mem8:$src),   m#"\t$dst, $src">;
-  def 16rm : I8086Inst<!add(base,3), MRMSrcMem,  NoImm, (outs), (ins GR16:$dst, mem16:$src), m#"\t$dst, $src">;
-  def 8ri  : I8086Inst<0x80, ri, Imm8,  (outs), (ins GR8:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
-  def 16ri : I8086Inst<0x81, ri, Imm16, (outs), (ins GR16:$dst, i16imm:$imm), m#"\t$dst, $imm">;
-  def 8mi  : I8086Inst<0x80, mi, Imm8,  (outs), (ins mem8e:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
-  def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), m#"\t$dst, $imm">;
-}
-
 // Flag-setting binary ALU with CodeGen patterns.  Register/immediate forms are
 // two-address (dst tied to src1) and set FLAGS; memory forms stay asm-only.
 multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
                  bit commutable> {
   let Defs = [FLAGS], Constraints = "$src1 = $dst" in {
+    let isCommutable = commutable in {
+      def 8rr : I8086Inst<!add(base,0), MRMDestReg, NoImm,
+                          (outs GR8:$dst), (ins GR8:$src1, GR8:$src2),
+                          m#"\t$dst, $src2",
+                          [(set GR8:$dst, (node GR8:$src1, GR8:$src2))]>;
+      def 16rr : I8086Inst<!add(base,1), MRMDestReg, NoImm,
+                           (outs GR16:$dst), (ins GR16:$src1, GR16:$src2),
+                           m#"\t$dst, $src2",
+                           [(set GR16:$dst, (node GR16:$src1, GR16:$src2))]>;
+    }
+    def 8ri : I8086Inst<0x80, ri, Imm8,
+                        (outs GR8:$dst), (ins GR8:$src1, i8imm:$imm),
+                        m#"\t$dst, $imm",
+                        [(set GR8:$dst, (node GR8:$src1, imm:$imm))]>;
+    def 16ri : I8086Inst<0x81, ri, Imm16,
+                         (outs GR16:$dst), (ins GR16:$src1, i16imm:$imm),
+                         m#"\t$dst, $imm",
+                         [(set GR16:$dst, (node GR16:$src1, imm:$imm))]>;
+  }
+  // Assembler-only memory forms.
+  def 8mr : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   m#"\t$dst, $src">;
+  def 16mr : I8086Inst<!add(base,1), MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src), m#"\t$dst, $src">;
+  def 8rm : I8086Inst<!add(base,2), MRMSrcMem, NoImm, (outs), (ins GR8:$dst, mem8:$src),   m#"\t$dst, $src">;
+  def 16rm : I8086Inst<!add(base,3), MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), m#"\t$dst, $src">;
+  def 8mi : I8086Inst<0x80, mi, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
+  def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), m#"\t$dst, $imm">;
+}
+
+// Carry-consuming ALU (ADC/SBB) for the high words of wide add/sub.  Identical
+// to BinOp but also reads FLAGS (the carry in), matching the glue-based adde/
+// sube nodes the type legalizer produces when expanding i32/i64 add/sub.
+multiclass BinOpC<string m, bits<8> base, Format ri, Format mi, SDNode node,
+                  bit commutable> {
+  let Defs = [FLAGS], Uses = [FLAGS], Constraints = "$src1 = $dst" in {
     let isCommutable = commutable in {
       def 8rr : I8086Inst<!add(base,0), MRMDestReg, NoImm,
                           (outs GR8:$dst), (ins GR8:$src1, GR8:$src2),
@@ -252,8 +271,21 @@ defm AND : BinOp<"and", 0x20, MRM4r, MRM4m, and, 1>;
 defm SUB : BinOp<"sub", 0x28, MRM5r, MRM5m, sub, 0>;
 defm XOR : BinOp<"xor", 0x30, MRM6r, MRM6m, xor, 1>;
 
-defm ADC : ArithLogic<"adc", 0x10, MRM2r, MRM2m>;
-defm SBB : ArithLogic<"sbb", 0x18, MRM3r, MRM3m>;
+defm ADC : BinOpC<"adc", 0x10, MRM2r, MRM2m, adde, 1>;
+defm SBB : BinOpC<"sbb", 0x18, MRM3r, MRM3m, sube, 0>;
+
+// Wide (i32/i64) add/sub are expanded by the type legalizer into a carry chain:
+// the low word is a plain ADD/SUB that *produces* the carry (addc/subc), and the
+// high word(s) are ADC/SBB that consume it (adde/sube, handled by the patterns
+// in BinOpC above).  Map the carry-producing low word onto ADD/SUB.
+def : Pat<(addc GR16:$a, GR16:$b), (ADD16rr GR16:$a, GR16:$b)>;
+def : Pat<(addc GR16:$a, imm:$b),  (ADD16ri GR16:$a, imm:$b)>;
+def : Pat<(addc GR8:$a,  GR8:$b),  (ADD8rr  GR8:$a,  GR8:$b)>;
+def : Pat<(addc GR8:$a,  imm:$b),  (ADD8ri  GR8:$a,  imm:$b)>;
+def : Pat<(subc GR16:$a, GR16:$b), (SUB16rr GR16:$a, GR16:$b)>;
+def : Pat<(subc GR16:$a, imm:$b),  (SUB16ri GR16:$a, imm:$b)>;
+def : Pat<(subc GR8:$a,  GR8:$b),  (SUB8rr  GR8:$a,  GR8:$b)>;
+def : Pat<(subc GR8:$a,  imm:$b),  (SUB8ri  GR8:$a,  imm:$b)>;
 
 // CMP sets FLAGS without writing a destination.
 let Defs = [FLAGS] in {
@@ -568,17 +600,32 @@ def : Pat<(i16 (I8086Wrapper texternalsym:$dst)), (MOV16ri texternalsym:$dst)>;
 def : Pat<(i16 (I8086Wrapper tblockaddress:$dst)),(MOV16ri tblockaddress:$dst)>;
 def : Pat<(i16 (I8086Wrapper tjumptable:$dst)),   (MOV16ri tjumptable:$dst)>;
 
+// Materialize a zero via XOR (2 bytes) rather than MOV reg,0 (3 bytes).  These
+// clobber FLAGS, so they are only selected where the flags are dead; the
+// scheduler serializes them out of any live-flags region.  Expanded to a real
+// XOR reg,reg post-RA (see I8086InstrInfo::expandPostRAPseudo).
+let isReMaterializable = 1, isAsCheapAsAMove = 1, isMoveImm = 1,
+    hasSideEffects = 0, Defs = [FLAGS] in {
+  def MOV8r0  : I8086Pseudo<(outs GR8:$dst),  (ins), "#MOV8r0",  [(set GR8:$dst,  (i8 0))]>;
+  def MOV16r0 : I8086Pseudo<(outs GR16:$dst), (ins), "#MOV16r0", [(set GR16:$dst, (i16 0))]>;
+}
+
 // i8 <-> i16 conversions.  The 8086 has no MOVZX/MOVSX and 8-bit ops leave the
 // high byte untouched, so:
 //   trunc  -> take the low 8-bit subregister
 //   anyext -> place the byte in the low half of an undef word
-//   zext   -> anyext then clear the high byte (and $reg, 0xff)
+//   zext   -> put the byte in the low half of a word whose high half is zeroed;
+//             this becomes `xor <hi>,<hi>` (2 bytes) rather than `and reg,0xff`,
+//             and constrains the result to AX/CX/DX/BX (the regs with a high
+//             byte).  If the source coalesces into the low byte, only the
+//             high-byte clear remains.
 def : Pat<(i8  (trunc GR16:$src)), (EXTRACT_SUBREG GR16:$src, sub_8bit_lo)>;
 def : Pat<(i16 (anyext GR8:$src)),
           (INSERT_SUBREG (i16 (IMPLICIT_DEF)), GR8:$src, sub_8bit_lo)>;
 def : Pat<(i16 (zext GR8:$src)),
-          (AND16ri (INSERT_SUBREG (i16 (IMPLICIT_DEF)), GR8:$src, sub_8bit_lo),
-                   255)>;
+          (INSERT_SUBREG
+              (INSERT_SUBREG (i16 (IMPLICIT_DEF)), (MOV8r0), sub_8bit_hi),
+              GR8:$src, sub_8bit_lo)>;
 
 // sext i8 -> i16 via CBW (AL -> AX).  The custom inserter copies the byte into
 // AL, runs CBW, and copies AX out.
