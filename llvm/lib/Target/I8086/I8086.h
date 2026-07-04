@@ -60,6 +60,10 @@ FunctionPass *createI8086CompactEncodingPass();
 // XCHG (preferring the 1-byte AX form), freeing the scratch register.
 FunctionPass *createI8086SwapPeepholePass();
 
+// Post-RA peephole: fold `add B,I; mov reg,[B]` into `mov reg,[B+I]` when the
+// index is already in SI/DI and the base in BX/BP (no move/spill introduced).
+FunctionPass *createI8086FoldIndexAddrPass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 

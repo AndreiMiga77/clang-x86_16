@@ -79,6 +79,8 @@ bool I8086PassConfig::addInstSelector() {
 void I8086PassConfig::addPreEmitPass() {
   // Post-RA peepholes.  All must run before branch relaxation so the instruction
   // sizes they change are final when offsets are computed.
+  // Fold add+access into [base+index] first, while kill flags are freshest.
+  addPass(createI8086FoldIndexAddrPass());
   addPass(createI8086SwapPeepholePass());
   // The byte-mask pass runs before the accumulator pass so `and ax,0xFF` becomes
   // `xor ah,ah` rather than the (longer) accumulator AND.

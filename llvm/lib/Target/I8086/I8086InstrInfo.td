@@ -146,11 +146,6 @@ def I8086push : SDNode<"I8086ISD::PUSH", SDT_I8086Push,
 // stack slots fold into memory operands.
 def addr : ComplexPattern<i16, 4, "selectMemAddr", [frameindex], []>;
 
-// Two-register [base+index] addressing.  Matches a single-use (reg + reg)
-// [+ const] address; the one-use guard means a multiply-used address is left as
-// a materialized add + single-register access instead (see selectMemAddrIdx).
-def addr_idx : ComplexPattern<i16, 4, "selectMemAddrIdx", [], []>;
-
 //===----------------------------------------------------------------------===//
 // Helper classes.
 //===----------------------------------------------------------------------===//
@@ -179,22 +174,22 @@ def MOV8rm  : I8086Inst<0x8A, MRMSrcMem, NoImm, (outs GR8:$dst),  (ins mem8:$src
 def MOV16rm : I8086Inst<0x8B, MRMSrcMem, NoImm, (outs GR16:$dst), (ins mem16:$src),
                         "mov\t$dst, $src", [(set GR16:$dst, (load addr:$src))]>;
 
-// Two-register [base+index] load/store variants (CodeGen-only; same encoding as
-// the forms above, just a constrained address operand).  AddedComplexity makes
-// isel prefer folding a single-use (base+index) address here over materializing
-// the add and using a single-register access.  Gated on FastEA: only worthwhile
-// when the effective-address calc is cheap (80186+).  On the 8086/8088 the
-// instructions still exist but are produced only by the post-RA index fold (when
-// the index is already in SI/DI, so no extra move/spill).
-let isCodeGenOnly = 1, AddedComplexity = 20, Predicates = [HasFastEA] in {
-def MOV8mr_idx  : I8086Inst<0x88, MRMDestMem, NoImm, (outs), (ins memidx:$dst, GR8:$src),
-                            "mov\t$dst, $src", [(store GR8:$src, addr_idx:$dst)]>;
-def MOV16mr_idx : I8086Inst<0x89, MRMDestMem, NoImm, (outs), (ins memidx:$dst, GR16:$src),
-                            "mov\t$dst, $src", [(store GR16:$src, addr_idx:$dst)]>;
-def MOV8rm_idx  : I8086Inst<0x8A, MRMSrcMem, NoImm, (outs GR8:$dst),  (ins memidx:$src),
-                            "mov\t$dst, $src", [(set GR8:$dst,  (load addr_idx:$src))]>;
-def MOV16rm_idx : I8086Inst<0x8B, MRMSrcMem, NoImm, (outs GR16:$dst), (ins memidx:$src),
-                            "mov\t$dst, $src", [(set GR16:$dst, (load addr_idx:$src))]>;
+// Two-register [base+index] load/store (CodeGen-only, no isel pattern).  Folding
+// address arithmetic into an indexed operand is a register-allocation decision
+// (it is only a win when the index is already in a callee-saved SI/DI, so no
+// move/spill is introduced), which isel cannot make -- so these are produced
+// solely by the post-RA I8086FoldIndexAddr pass.  Same encoding as the plain MOV
+// load/store forms; the memidx operand's BASE16/IDX16 classes document the only
+// legal 8086 base+index pairing.
+let isCodeGenOnly = 1 in {
+let mayStore = 1 in {
+def MOV8mr_idx  : I8086Inst<0x88, MRMDestMem, NoImm, (outs), (ins memidx:$dst, GR8:$src),  "mov\t$dst, $src">;
+def MOV16mr_idx : I8086Inst<0x89, MRMDestMem, NoImm, (outs), (ins memidx:$dst, GR16:$src), "mov\t$dst, $src">;
+}
+let mayLoad = 1 in {
+def MOV8rm_idx  : I8086Inst<0x8A, MRMSrcMem, NoImm, (outs GR8:$dst),  (ins memidx:$src), "mov\t$dst, $src">;
+def MOV16rm_idx : I8086Inst<0x8B, MRMSrcMem, NoImm, (outs GR16:$dst), (ins memidx:$src), "mov\t$dst, $src">;
+}
 }
 
 // Accumulator <-> direct memory (moffs): AL/AX to/from a bare [disp16] address.
