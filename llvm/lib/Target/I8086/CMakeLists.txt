@@ -19,6 +19,7 @@ add_llvm_target(I8086CodeGen
   I8086CompactEncoding.cpp
   I8086FixupByteMask.cpp
   I8086FoldIndexAddr.cpp
+  I8086FoldMemImm.cpp
   I8086FrameLowering.cpp
   I8086ISelDAGToDAG.cpp
   I8086ISelLowering.cpp

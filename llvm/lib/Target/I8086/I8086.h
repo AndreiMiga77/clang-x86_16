@@ -64,6 +64,10 @@ FunctionPass *createI8086SwapPeepholePass();
 // index is already in SI/DI and the base in BX/BP (no move/spill introduced).
 FunctionPass *createI8086FoldIndexAddrPass();
 
+// Post-RA peephole: reorder `mov R,[mem]; op R,imm` -> `mov R,imm; op R,[mem]`
+// (commutative ops, R not AX/AL) when that is strictly smaller.
+FunctionPass *createI8086FoldMemImmPass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 
