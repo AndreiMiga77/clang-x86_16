@@ -72,6 +72,13 @@ def SEGR : RegisterClass<"I8086", [i16], 16, (add ES, CS, SS, DS)>;
 // the operand's register class.
 def ADDR16 : RegisterClass<"I8086", [i16], 16, (add BX, SI, DI, BP)>;
 
+// Two-register [base+index] addressing (8086 allows only base in {BX,BP} and
+// index in {SI,DI}).  These constrain only the operands of the indexed
+// load/store forms; plain single-register addressing keeps the flexible ADDR16
+// so it is unaffected.
+def BASE16 : RegisterClass<"I8086", [i16], 16, (add BX, BP)>;
+def IDX16  : RegisterClass<"I8086", [i16], 16, (add SI, DI)>;
+
 // Single-register sub-classes for instructions with fixed register operands
 // (accumulator for IN/OUT, CL for shifts, DX for variable-port IN/OUT).
 def AREG8  : RegisterClass<"I8086", [i8],  8,  (add AL)>;

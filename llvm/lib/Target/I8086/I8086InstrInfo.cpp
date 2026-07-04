@@ -435,14 +435,17 @@ unsigned I8086InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
 //
 // costs.md lists the 8086 execution-unit (EU) clock counts and byte sizes but
 // explicitly ignores the bus-interface-unit (BIU).  The BIU prefetches code and
-// performs operand memory cycles over a shared bus that moves one word per
-// 4 clocks; it overlaps EU execution, so over a straight-line stream the bus is
-// the serial bottleneck.  We therefore model an instruction's cost as
-//   max(EU cycles, 4 * busWords)
-// where busWords = code words to fetch + operand data words.  This captures the
-// classic 8086 effect that a nominally 2-clock `mov reg,reg` really costs about
-// 4 clocks (one word of prefetch), while leaving genuinely slow instructions
-// (MUL, memory ALU, ...) dominated by their EU time.
+// performs operand memory cycles over a shared bus (4 clocks per bus cycle); it
+// overlaps EU execution, so over a straight-line stream the bus is the serial
+// bottleneck.  We model an instruction's cost as
+//   max(EU cycles, 4 * ceil(totalBytes / bytesPerBusCycle))
+// totalBytes = instruction bytes + operand data bytes.  The bus width is
+// tuning-specific: the 8086/80186 move 2 bytes per bus cycle, the 8088 moves 1
+// (and, being 8-bit, also pays one extra bus cycle per word memory access in
+// *execution*, which costs.md's 8086 EU figures omit).  So a 2-clock `mov
+// reg,reg` is fetch-bound at 4 clocks on the 8086 but 8 on the 8088, while
+// genuinely slow instructions (MUL, memory ALU, ...) stay EU-bound on both.  On
+// the 8088 nearly everything is fetch-bound, i.e. size-optimal == speed-optimal.
 //===----------------------------------------------------------------------===//
 
 // Effective-address computation cost (clocks) for a memory operand, from the
@@ -579,7 +582,7 @@ unsigned I8086InstrInfo::getInstructionCost(const MachineInstr &MI) const {
     MemLogical = 0;
   }
 
-  unsigned EA = 0, DataWords = 0;
+  unsigned EA = 0, DataAccesses = 0;
   if (MemLogical >= 0) {
     SmallVector<unsigned, 8> Ops;
     for (unsigned I = 0, E = Desc.getNumOperands(); I != E; ++I)
@@ -591,12 +594,26 @@ unsigned I8086InstrInfo::getInstructionCost(const MachineInstr &MI) const {
                               MI.getOperand(P + 2));
     // A read-modify-write destination touches the bus twice (read + write); a
     // plain store or a load touches it once.
-    DataWords = (MemDest && !isMovLike(MI.getOpcode())) ? 2 : 1;
+    DataAccesses = (MemDest && !isMovLike(MI.getOpcode())) ? 2 : 1;
   }
 
   unsigned EU = euBaseCycles(MI, MemLogical >= 0, MemDest, EA);
-  unsigned BusWords = (Size + 1) / 2 + DataWords;
-  return std::max(EU, 4 * BusWords);
+
+  // Bus model (see the header comment).  costs.md's EU figures are the 8086
+  // (16-bit bus) ones; the 8088's 8-bit bus splits each word memory access into
+  // two transfers, adding one bus cycle (4 clocks) of *execution* per word
+  // access.  (Data accesses are treated as word-sized; byte ops are slightly
+  // overestimated on the 8088.)
+  bool WideBus = MI.getMF()->getSubtarget<I8086Subtarget>().hasWideBus();
+  if (!WideBus)
+    EU += 4 * DataAccesses;
+
+  // Fetch + data bus occupancy: 4 clocks per bus cycle moving BytesPerCycle
+  // bytes (2 on the 8086/80186, 1 on the 8088).
+  unsigned BytesPerCycle = WideBus ? 2 : 1;
+  unsigned BusBytes = Size + 2 * DataAccesses;
+  unsigned BusCycles = 4 * ((BusBytes + BytesPerCycle - 1) / BytesPerCycle);
+  return std::max(EU, BusCycles);
 }
 
 MachineBasicBlock *

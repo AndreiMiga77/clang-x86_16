@@ -31,12 +31,22 @@ public:
   I8086DAGToDAGISel(I8086TargetMachine &TM, CodeGenOptLevel OptLevel)
       : SelectionDAGISel(TM, OptLevel) {}
 
+  bool runOnMachineFunction(MachineFunction &MF) override {
+    Subtarget = &MF.getSubtarget<I8086Subtarget>();
+    return SelectionDAGISel::runOnMachineFunction(MF);
+  }
+
 private:
+  // Set per function; consulted by generated pattern predicates (e.g. FastEA).
+  const I8086Subtarget *Subtarget = nullptr;
+
 #include "I8086GenDAGISel.inc"
 
   void Select(SDNode *N) override;
   bool selectMemAddr(SDValue N, SDValue &Base, SDValue &Index, SDValue &Disp,
                      SDValue &Seg);
+  bool selectMemAddrIdx(SDValue N, SDValue &Base, SDValue &Index, SDValue &Disp,
+                        SDValue &Seg);
   bool SelectInlineAsmMemoryOperand(const SDValue &Op,
                                     InlineAsm::ConstraintCode ConstraintID,
                                     std::vector<SDValue> &OutOps) override;
@@ -120,6 +130,43 @@ bool I8086DAGToDAGISel::selectMemAddr(SDValue N, SDValue &Base, SDValue &Index,
   // Plain register base: [reg].
   Base = N;
   Disp = CurDAG->getTargetConstant(0, dl, MVT::i16);
+  return true;
+}
+
+// Match a two-register [base+index] (+ constant displacement) address.  Folding
+// the address arithmetic into the memory operand saves the explicit add, but the
+// indexed effective address costs 2-3 clocks more per access than a single
+// register -- so this is only a win when the address feeds exactly one memory
+// op.  The one-use guards enforce that; a multiply-used address falls through to
+// selectMemAddr, which materializes the add once and uses [reg] at each access.
+bool I8086DAGToDAGISel::selectMemAddrIdx(SDValue N, SDValue &Base,
+                                         SDValue &Index, SDValue &Disp,
+                                         SDValue &Seg) {
+  SDLoc dl(N);
+  Seg = CurDAG->getRegister(0, MVT::i16);
+  int64_t Off = 0;
+
+  // Optional outer (add addr, const) supplies the displacement.
+  if (N.getOpcode() == ISD::ADD && N.hasOneUse())
+    if (ConstantSDNode *C = dyn_cast<ConstantSDNode>(N.getOperand(1))) {
+      Off = C->getSExtValue();
+      N = N.getOperand(0);
+    }
+
+  // Core must be (reg + reg), single-use, with neither side a constant or a
+  // frame index (those are single-register [reg+disp] addresses).
+  if (N.getOpcode() != ISD::ADD || !N.hasOneUse())
+    return false;
+  SDValue A = N.getOperand(0), B = N.getOperand(1);
+  if (isa<ConstantSDNode>(A) || isa<ConstantSDNode>(B) ||
+      isa<FrameIndexSDNode>(A) || isa<FrameIndexSDNode>(B))
+    return false;
+
+  // Either assignment is a legal base+index sum; the register classes on the
+  // operand (BASE16 / IDX16) force a valid {BX,BP}+{SI,DI} pairing.
+  Base = A;
+  Index = B;
+  Disp = CurDAG->getSignedTargetConstant(Off, dl, MVT::i16);
   return true;
 }
 

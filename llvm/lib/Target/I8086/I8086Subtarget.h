@@ -25,12 +25,24 @@ class StringRef;
 
 class I8086Subtarget : public I8086GenSubtargetInfo {
   virtual void anchor();
+
+  // Tuning feature bits (set by ParseSubtargetFeatures from the CPU/features).
+  bool HasWideBus = false;
+  bool HasFastEA = false;
+
   I8086InstrInfo InstrInfo;
   I8086TargetLowering TLInfo;
   std::unique_ptr<const SelectionDAGTargetInfo> TSInfo;
   I8086FrameLowering FrameLowering;
 
 public:
+  // 16-bit bus (8086/80186) fetches 2 bytes per 4-clock cycle; the 8088's 8-bit
+  // bus fetches 1 byte, and pays an extra bus cycle per word memory access.
+  bool hasWideBus() const { return HasWideBus; }
+  // 80186+ effective-address calculation is cheap enough that indexed
+  // [base+index] addressing is generally profitable.
+  bool hasFastEA() const { return HasFastEA; }
+
   I8086Subtarget(const Triple &TT, const std::string &CPU,
                  const std::string &FS, const TargetMachine &TM);
   ~I8086Subtarget() override;
