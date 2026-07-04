@@ -83,6 +83,9 @@ void I8086PassConfig::addPreEmitPass() {
   addPass(createI8086FoldIndexAddrPass());
   addPass(createI8086FoldMemImmPass());
   addPass(createI8086FormLeaPass());
+  // Drop `cmp reg,0` the preceding ALU op already answered, or shrink it to
+  // `test reg,reg`; runs after the folds so it sees the final ALU forms.
+  addPass(createI8086OptCmpZeroPass());
   addPass(createI8086SwapPeepholePass());
   // The byte-mask pass runs before the accumulator pass so `and ax,0xFF` becomes
   // `xor ah,ah` rather than the (longer) accumulator AND.

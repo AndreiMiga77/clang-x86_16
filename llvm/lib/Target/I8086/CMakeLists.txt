@@ -25,6 +25,7 @@ add_llvm_target(I8086CodeGen
   I8086ISelDAGToDAG.cpp
   I8086ISelLowering.cpp
   I8086InstrInfo.cpp
+  I8086OptCmpZero.cpp
   I8086MCInstLower.cpp
   I8086MachineFunctionInfo.cpp
   I8086RegisterInfo.cpp

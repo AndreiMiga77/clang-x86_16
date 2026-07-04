@@ -72,6 +72,11 @@ FunctionPass *createI8086FoldMemImmPass();
 // LEA (addressing-register operands only), when smaller.
 FunctionPass *createI8086FormLeaPass();
 
+// Post-RA peephole for equality tests against zero: drop a `cmp reg,0` whose ZF
+// a preceding flag-setting ALU op already produced, else shrink it to the
+// one-byte-smaller `test reg,reg`.  Only when every FLAGS user is je/jne.
+FunctionPass *createI8086OptCmpZeroPass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 
