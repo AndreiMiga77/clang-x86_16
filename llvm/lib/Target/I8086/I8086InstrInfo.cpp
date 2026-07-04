@@ -139,24 +139,34 @@ bool I8086InstrInfo::expandPostRAPseudo(MachineInstr &MI) const {
   }
   case I8086::SEXT16: {
     // Sign-extend the low byte of a hi-half-capable register in place.  In AX
-    // that is a 1-byte `cbw`; elsewhere `rol lo,1; sbb hi,hi; ror lo,1` (6 bytes
-    // but no AX, so it doesn't force an AX spill).
+    // that is a 1-byte `cbw`.  Elsewhere, swap the value into AX, cbw, and swap
+    // back: `xchg ax,r; cbw; xchg ax,r` (3 bytes).  The xchg preserves whatever
+    // AX held, so this doesn't spill a live AX -- and unlike a rotate sequence it
+    // leaves FLAGS alone.
     Register R = MI.getOperand(0).getReg();
     MachineBasicBlock &MBB = *MI.getParent();
     DebugLoc dl = MI.getDebugLoc();
     if (R == I8086::AX) {
       BuildMI(MBB, MI, dl, get(I8086::CBW));
     } else {
-      const TargetRegisterInfo &TRI = getRegisterInfo();
-      Register Lo = TRI.getSubReg(R, I8086::sub_8bit_lo);
-      Register Hi = TRI.getSubReg(R, I8086::sub_8bit_hi);
-      // rol lo,1 shifts the sign bit into CF; sbb hi,hi sets hi to 0x00/0xFF;
-      // ror lo,1 restores lo.  The sbb reads of hi are the undef high half.
-      BuildMI(MBB, MI, dl, get(I8086::ROL8b1), Lo).addReg(Lo);
-      BuildMI(MBB, MI, dl, get(I8086::SBB8rr), Hi)
-          .addReg(Hi, RegState::Undef)
-          .addReg(Hi, RegState::Undef);
-      BuildMI(MBB, MI, dl, get(I8086::ROR8b1), Lo).addReg(Lo);
+      // If AX is dead here there is no value to preserve, so the first swap's AX
+      // read is undef; otherwise it reads (and the second restores) the live AX.
+      bool AXDead = MBB.computeRegisterLiveness(&getRegisterInfo(), I8086::AX,
+                                                MI) ==
+                    MachineBasicBlock::LQR_Dead;
+      // xchg ax, R  (both operands are uses; the swap is modeled as implicit
+      // defs of both, as in the swap peephole).
+      BuildMI(MBB, MI, dl, get(I8086::XCHG16ar))
+          .addReg(R)
+          .addReg(I8086::AX, AXDead ? RegState::Undef : 0)
+          .addReg(R, RegState::ImplicitDefine)
+          .addReg(I8086::AX, RegState::ImplicitDefine);
+      BuildMI(MBB, MI, dl, get(I8086::CBW));
+      BuildMI(MBB, MI, dl, get(I8086::XCHG16ar))
+          .addReg(R)
+          .addReg(I8086::AX)
+          .addReg(R, RegState::ImplicitDefine)
+          .addReg(I8086::AX, RegState::ImplicitDefine);
     }
     MI.eraseFromParent();
     return true;

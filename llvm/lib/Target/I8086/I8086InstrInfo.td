@@ -841,11 +841,12 @@ def : Pat<(i16 (zext GR8:$src)),
 
 // sext i8 -> i16, done in place in a hi-half-capable register (GR16H) whose low
 // byte holds the value.  Two-address; expanded post-RA (see expandPostRAPseudo)
-// to `cbw` when it landed in AX, else `rol lo,1; sbb hi,hi; ror lo,1` -- one byte
-// vs six, but the rotate form needs no AX and so avoids spilling AX when it is
-// live.  The allocator (AX-first order) picks AX when free.  Defs=[FLAGS] because
-// the rotate form clobbers them (cbw does not, but the pseudo can't tell yet).
-let isCodeGenOnly = 1, Constraints = "$src = $dst", Defs = [FLAGS] in
+// to `cbw` when it landed in AX, else `xchg ax,r; cbw; xchg ax,r` -- one byte vs
+// three, but the xchg form uses AX only transiently (swapping any live value out
+// and back), so it avoids spilling AX when it is live and, unlike a rotate
+// sequence, leaves FLAGS untouched.  The allocator (AX-first order) picks AX when
+// free.  No Defs=[FLAGS]: neither cbw nor xchg touch the flags.
+let isCodeGenOnly = 1, Constraints = "$src = $dst" in
 def SEXT16 : I8086Pseudo<(outs GR16H:$dst), (ins GR16H:$src), "#SEXT16", []>;
 
 def : Pat<(sext GR8:$src),
