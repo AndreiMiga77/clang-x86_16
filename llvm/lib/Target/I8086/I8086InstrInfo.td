@@ -269,6 +269,10 @@ def OUT8rr  : I8086Inst<0xEE, RawFrm, NoImm, (outs), (ins DREG16:$dx, AREG8:$src
 def OUT16rr : I8086Inst<0xEF, RawFrm, NoImm, (outs), (ins DREG16:$dx, AREG16:$src), "out\t$dx, $src">;
 
 def LEA16 : I8086Inst<0x8D, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, anymem:$src), "lea\t$dst, $src">;
+// CodeGen form (defines $dst, no memory access, no FLAGS): built by the post-RA
+// I8086FormLea pass to collapse a mov/add chain that computes base+index+disp.
+let isCodeGenOnly = 1 in
+def LEA16r : I8086Inst<0x8D, MRMSrcMem, NoImm, (outs GR16:$dst), (ins anymem:$src), "lea\t$dst, $src">;
 def LDS16 : I8086Inst<0xC5, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, anymem:$src), "lds\t$dst, $src">;
 def LES16 : I8086Inst<0xC4, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, anymem:$src), "les\t$dst, $src">;
 

@@ -91,6 +91,10 @@ check fold-index "$(run fi.com FI.TXT)" "44"
 "$CLANG" "${cflags[@]}" "$DIR/sext.c" -o "$WORK/sx.o"; link sx "$WORK/sx.o" "$WORK/rt.o"
 check sext "$(run sx.com SX.TXT)" "65531 995 872"
 
+# base+index+disp collapsed into one LEA
+"$CLANG" "${cflags[@]}" "$DIR/form-lea.c" -o "$WORK/le.o"; link le "$WORK/le.o" "$WORK/rt.o"
+check form-lea "$(run le.com LE.TXT)" "1031"
+
 # branch relaxation: a loop body larger than rel8 forces a relaxed far back-edge
 "$CLANG" "${cflags[@]}" "$DIR/relax.c" -o "$WORK/rx.o"; link rx "$WORK/rx.o" "$WORK/rt.o"
 check relax "$(run rx.com RX.TXT)" "10"

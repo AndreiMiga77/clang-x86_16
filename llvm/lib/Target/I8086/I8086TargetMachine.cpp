@@ -82,6 +82,7 @@ void I8086PassConfig::addPreEmitPass() {
   // Fold add+access into [base+index] first, while kill flags are freshest.
   addPass(createI8086FoldIndexAddrPass());
   addPass(createI8086FoldMemImmPass());
+  addPass(createI8086FormLeaPass());
   addPass(createI8086SwapPeepholePass());
   // The byte-mask pass runs before the accumulator pass so `and ax,0xFF` becomes
   // `xor ah,ah` rather than the (longer) accumulator AND.

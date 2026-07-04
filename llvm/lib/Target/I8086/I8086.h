@@ -68,6 +68,10 @@ FunctionPass *createI8086FoldIndexAddrPass();
 // (commutative ops, R not AX/AL) when that is strictly smaller.
 FunctionPass *createI8086FoldMemImmPass();
 
+// Post-RA peephole: collapse a mov/add chain computing base+index+disp into one
+// LEA (addressing-register operands only), when smaller.
+FunctionPass *createI8086FormLeaPass();
+
 void initializeI8086DAGToDAGISelLegacyPass(PassRegistry &);
 void initializeI8086AsmPrinterPass(PassRegistry &);
 
