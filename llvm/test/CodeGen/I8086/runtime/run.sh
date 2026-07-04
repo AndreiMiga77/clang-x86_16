@@ -87,6 +87,10 @@ check not-neg "$(run nn.com NN.TXT)" "60875 60876 237 238"
 "$CLANG" "${cflags[@]}" "$DIR/fold-index.c" -o "$WORK/fi.o"; link fi "$WORK/fi.o" "$WORK/rt.o"
 check fold-index "$(run fi.com FI.TXT)" "44"
 
+# i8->i16 sign extension: cbw path and the AX-avoiding rol/sbb/ror path
+"$CLANG" "${cflags[@]}" "$DIR/sext.c" -o "$WORK/sx.o"; link sx "$WORK/sx.o" "$WORK/rt.o"
+check sext "$(run sx.com SX.TXT)" "65531 995 872"
+
 # branch relaxation: a loop body larger than rel8 forces a relaxed far back-edge
 "$CLANG" "${cflags[@]}" "$DIR/relax.c" -o "$WORK/rx.o"; link rx "$WORK/rx.o" "$WORK/rt.o"
 check relax "$(run rx.com RX.TXT)" "10"

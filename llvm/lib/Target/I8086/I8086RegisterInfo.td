@@ -79,6 +79,12 @@ def ADDR16 : RegisterClass<"I8086", [i16], 16, (add BX, SI, DI, BP)>;
 def BASE16 : RegisterClass<"I8086", [i16], 16, (add BX, BP)>;
 def IDX16  : RegisterClass<"I8086", [i16], 16, (add SI, DI)>;
 
+// The 16-bit registers that have addressable 8-bit halves (AX/CX/DX/BX).  Used
+// for the in-place byte sign-extension pseudo (rol lo,1 / sbb hi,hi / ror lo,1).
+// AX is first so the allocator prefers it when free -- there the pseudo becomes
+// a 1-byte CBW instead of the 3-instruction rotate sequence.
+def GR16H : RegisterClass<"I8086", [i16], 16, (add AX, CX, DX, BX)>;
+
 // Single-register sub-classes for instructions with fixed register operands
 // (accumulator for IN/OUT, CL for shifts, DX for variable-port IN/OUT).
 def AREG8  : RegisterClass<"I8086", [i8],  8,  (add AL)>;

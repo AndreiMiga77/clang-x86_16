@@ -839,11 +839,17 @@ def : Pat<(i16 (zext GR8:$src)),
               (INSERT_SUBREG (i16 (IMPLICIT_DEF)), (MOV8r0), sub_8bit_hi),
               GR8:$src, sub_8bit_lo)>;
 
-// sext i8 -> i16 via CBW (AL -> AX).  The custom inserter copies the byte into
-// AL, runs CBW, and copies AX out.
-let isCodeGenOnly = 1, usesCustomInserter = 1, Defs = [AX] in
-def MOVSX16r8 : I8086Pseudo<(outs GR16:$dst), (ins GR8:$src), "#MOVSX16r8",
-                            [(set GR16:$dst, (sext GR8:$src))]>;
+// sext i8 -> i16, done in place in a hi-half-capable register (GR16H) whose low
+// byte holds the value.  Two-address; expanded post-RA (see expandPostRAPseudo)
+// to `cbw` when it landed in AX, else `rol lo,1; sbb hi,hi; ror lo,1` -- one byte
+// vs six, but the rotate form needs no AX and so avoids spilling AX when it is
+// live.  The allocator (AX-first order) picks AX when free.  Defs=[FLAGS] because
+// the rotate form clobbers them (cbw does not, but the pseudo can't tell yet).
+let isCodeGenOnly = 1, Constraints = "$src = $dst", Defs = [FLAGS] in
+def SEXT16 : I8086Pseudo<(outs GR16H:$dst), (ins GR16H:$src), "#SEXT16", []>;
+
+def : Pat<(sext GR8:$src),
+          (SEXT16 (INSERT_SUBREG (i16 (IMPLICIT_DEF)), GR8:$src, sub_8bit_lo))>;
 
 // A 16-bit shift/rotate by 8..15 is a byte op plus a residual shift of 0..7 --
 // vastly faster than the CL form (shift-by-CL is 8+4*count cycles).  The custom

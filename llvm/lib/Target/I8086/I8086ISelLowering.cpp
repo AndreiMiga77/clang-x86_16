@@ -48,8 +48,8 @@ I8086TargetLowering::I8086TargetLowering(const TargetMachine &TM,
   }
   setTruncStoreAction(MVT::i16, MVT::i8, Expand);
 
-  // i8->i16 sign extension uses CBW via the MOVSX16r8 pseudo (see the .td);
-  // zero/any extension are handled by patterns.
+  // i8->i16 sign extension uses the in-place SEXT16 pseudo (cbw or rol/sbb/ror,
+  // chosen post-RA; see the .td); zero/any extension are handled by patterns.
 
   // The 8086 shifts and rotates only by 1 or CL.  SHL/SRL/SRA and ROTL/ROTR are
   // selected via the Shl*/Shr*/Sar*/Rol*/Ror* custom-inserter pseudos, which move
@@ -728,20 +728,6 @@ I8086TargetLowering::EmitInstrWithCustomInserter(MachineInstr &MI,
     return emitMulDiv(MI, BB);
 
   // sext i8 -> i16 via CBW: copy the byte into AL, CBW, copy AX out.
-  if (Opc == I8086::MOVSX16r8) {
-    const TargetInstrInfo &TII =
-        *BB->getParent()->getSubtarget().getInstrInfo();
-    DebugLoc dl = MI.getDebugLoc();
-    BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY), I8086::AL)
-        .addReg(MI.getOperand(1).getReg());
-    BuildMI(*BB, MI, dl, TII.get(I8086::CBW));
-    BuildMI(*BB, MI, dl, TII.get(TargetOpcode::COPY),
-            MI.getOperand(0).getReg())
-        .addReg(I8086::AX);
-    MI.eraseFromParent();
-    return BB;
-  }
-
   assert((Opc == I8086::Select8 || Opc == I8086::Select16) &&
          "Unexpected instr type to insert");
   const TargetInstrInfo &TII = *BB->getParent()->getSubtarget().getInstrInfo();
