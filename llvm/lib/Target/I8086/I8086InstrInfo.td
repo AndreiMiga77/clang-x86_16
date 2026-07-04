@@ -283,7 +283,9 @@ def XLAT  : NullaryInst<0xD7, "xlat">;
 //===----------------------------------------------------------------------===//
 
 // Flag-setting binary ALU with CodeGen patterns.  Register/immediate forms are
-// two-address (dst tied to src1) and set FLAGS; memory forms stay asm-only.
+// two-address (dst tied to src1) and set FLAGS.  Memory operands are folded: a
+// single-use load reads directly into the op (reg,mem), and a load+op+store to
+// one address becomes a read-modify-write (mem,reg / mem,imm).
 multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
                  bit commutable> {
   let Defs = [FLAGS], Constraints = "$src1 = $dst" in {
@@ -297,6 +299,11 @@ multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
                            m#"\t$dst, $src2",
                            [(set GR16:$dst, (node GR16:$src1, GR16:$src2))]>;
     }
+    // reg,imm forms.  AddedComplexity keeps a constant operand as an immediate
+    // rather than letting isel materialize it into a register to feed the
+    // load-fold below; the post-RA I8086FoldMemImm pass then folds the memory
+    // operand back in only where that is actually smaller.
+    let AddedComplexity = 30 in {
     def 8ri : I8086Inst<0x80, ri, Imm8,
                         (outs GR8:$dst), (ins GR8:$src1, i8imm:$imm),
                         m#"\t$dst, $imm",
@@ -311,15 +318,39 @@ multiclass BinOp<string m, bits<8> base, Format ri, Format mi, SDNode node,
                           (outs GR16:$dst), (ins GR16:$src1, i16i8imm:$imm),
                           m#"\t$dst, $imm",
                           [(set GR16:$dst, (node GR16:$src1, i16immSExt8:$imm))]>;
+    } // AddedComplexity
+    // Load-folded: reg = reg OP mem.  Selected for a real value operand; a
+    // constant stays an immediate (the reg,imm forms above outrank this), and
+    // the post-RA fold decides whether to pull the memory operand in.
+    let mayLoad = 1 in {
+      def 8rm : I8086Inst<!add(base,2), MRMSrcMem, NoImm,
+                          (outs GR8:$dst), (ins GR8:$src1, mem8:$src2),
+                          m#"\t$dst, $src2",
+                          [(set GR8:$dst, (node GR8:$src1, (load addr:$src2)))]>;
+      def 16rm : I8086Inst<!add(base,3), MRMSrcMem, NoImm,
+                           (outs GR16:$dst), (ins GR16:$src1, mem16:$src2),
+                           m#"\t$dst, $src2",
+                           [(set GR16:$dst, (node GR16:$src1, (load addr:$src2)))]>;
+    }
   }
-  // Assembler-only memory forms.
-  def 8mr : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   m#"\t$dst, $src">;
-  def 16mr : I8086Inst<!add(base,1), MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src), m#"\t$dst, $src">;
-  def 8rm : I8086Inst<!add(base,2), MRMSrcMem, NoImm, (outs), (ins GR8:$dst, mem8:$src),   m#"\t$dst, $src">;
-  def 16rm : I8086Inst<!add(base,3), MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), m#"\t$dst, $src">;
-  def 8mi : I8086Inst<0x80, mi, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   m#"\t$dst, $imm">;
-  def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), m#"\t$dst, $imm">;
-  def 16mi8 : I8086Inst<0x83, mi, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm), m#"\t$dst, $imm">;
+  // Read-modify-write memory forms: mem = mem OP reg / imm.
+  let Defs = [FLAGS], mayLoad = 1, mayStore = 1 in {
+    def 8mr : I8086Inst<!add(base,0), MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),
+                        m#"\t$dst, $src",
+                        [(store (node (load addr:$dst), GR8:$src), addr:$dst)]>;
+    def 16mr : I8086Inst<!add(base,1), MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src),
+                         m#"\t$dst, $src",
+                         [(store (node (load addr:$dst), GR16:$src), addr:$dst)]>;
+    def 8mi : I8086Inst<0x80, mi, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),
+                        m#"\t$dst, $imm",
+                        [(store (node (load addr:$dst), (i8 imm:$imm)), addr:$dst)]>;
+    def 16mi : I8086Inst<0x81, mi, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm),
+                         m#"\t$dst, $imm",
+                         [(store (node (load addr:$dst), (i16 imm:$imm)), addr:$dst)]>;
+    def 16mi8 : I8086Inst<0x83, mi, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm),
+                          m#"\t$dst, $imm",
+                          [(store (node (load addr:$dst), i16immSExt8:$imm), addr:$dst)]>;
+  }
 }
 
 // Carry-consuming ALU (ADC/SBB) for the high words of wide add/sub.  Identical
@@ -397,14 +428,23 @@ let Defs = [FLAGS] in {
                           "cmp\t$src1, $imm", [(I8086cmp GR16:$src1, imm:$imm)]>;
   def CMP16ri8 : I8086Inst<0x83, MRM7r, Imm8, (outs), (ins GR16:$src1, i16i8imm:$imm),
                            "cmp\t$src1, $imm", [(I8086cmp GR16:$src1, i16immSExt8:$imm)]>;
-  // Assembler-only memory forms.
-  def CMP8mr  : I8086Inst<0x38, MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),   "cmp\t$dst, $src">;
-  def CMP16mr : I8086Inst<0x39, MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src), "cmp\t$dst, $src">;
-  def CMP8rm  : I8086Inst<0x3A, MRMSrcMem, NoImm, (outs), (ins GR8:$dst, mem8:$src),   "cmp\t$dst, $src">;
-  def CMP16rm : I8086Inst<0x3B, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src), "cmp\t$dst, $src">;
-  def CMP8mi  : I8086Inst<0x80, MRM7m, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),   "cmp\t$dst, $imm">;
-  def CMP16mi : I8086Inst<0x81, MRM7m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm), "cmp\t$dst, $imm">;
-  def CMP16mi8 : I8086Inst<0x83, MRM7m, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm), "cmp\t$dst, $imm">;
+  // Memory-folded: compare a single-use load directly (either operand order).
+  let mayLoad = 1 in {
+  def CMP8mr  : I8086Inst<0x38, MRMDestMem, NoImm, (outs), (ins mem8:$dst, GR8:$src),
+                          "cmp\t$dst, $src", [(I8086cmp (load addr:$dst), GR8:$src)]>;
+  def CMP16mr : I8086Inst<0x39, MRMDestMem, NoImm, (outs), (ins mem16:$dst, GR16:$src),
+                          "cmp\t$dst, $src", [(I8086cmp (load addr:$dst), GR16:$src)]>;
+  def CMP8rm  : I8086Inst<0x3A, MRMSrcMem, NoImm, (outs), (ins GR8:$dst, mem8:$src),
+                          "cmp\t$dst, $src", [(I8086cmp GR8:$dst, (load addr:$src))]>;
+  def CMP16rm : I8086Inst<0x3B, MRMSrcMem, NoImm, (outs), (ins GR16:$dst, mem16:$src),
+                          "cmp\t$dst, $src", [(I8086cmp GR16:$dst, (load addr:$src))]>;
+  def CMP8mi  : I8086Inst<0x80, MRM7m, Imm8, (outs), (ins mem8e:$dst, i8imm:$imm),
+                          "cmp\t$dst, $imm", [(I8086cmp (load addr:$dst), (i8 imm:$imm))]>;
+  def CMP16mi : I8086Inst<0x81, MRM7m, Imm16, (outs), (ins mem16e:$dst, i16imm:$imm),
+                          "cmp\t$dst, $imm", [(I8086cmp (load addr:$dst), (i16 imm:$imm))]>;
+  def CMP16mi8 : I8086Inst<0x83, MRM7m, Imm8, (outs), (ins mem16e:$dst, i16i8imm:$imm),
+                           "cmp\t$dst, $imm", [(I8086cmp (load addr:$dst), i16immSExt8:$imm)]>;
+  }
 }
 
 // TEST (group differs: 84/85 for r/m,reg; F6/F7 /0 for r/m,imm).
@@ -458,7 +498,7 @@ let Defs = [FLAGS] in {
 // a wide add/sub -- but that word is an addc/subc node (mapped to ADD/SUB) while
 // these match plain add, so there is no overlap.  They still clobber the other
 // arithmetic flags (ZF/SF/OF/AF/PF), hence Defs=[FLAGS].
-let Constraints = "$src1 = $dst", Defs = [FLAGS] in {
+let AddedComplexity = 30, Constraints = "$src1 = $dst", Defs = [FLAGS] in {
   def INC16r : I8086Inst<0x40, AddRegFrm, NoImm, (outs GR16:$dst), (ins GR16:$src1),
                          "inc\t$dst", [(set GR16:$dst, (add GR16:$src1, 1))]>;
   def DEC16r : I8086Inst<0x48, AddRegFrm, NoImm, (outs GR16:$dst), (ins GR16:$src1),
@@ -488,7 +528,7 @@ defm IDIV : Grp3<"idiv", MRM7r, MRM7m, MRM7r, MRM7m>;
 
 // NOT (~x): two-address register CodeGen form -- 2 bytes / 3 cycles and, unlike
 // `xor r,-1` (3-4 bytes, 4 cycles), leaves FLAGS untouched.  Asm-only mem forms.
-let Constraints = "$src1 = $dst" in {
+let AddedComplexity = 30, Constraints = "$src1 = $dst" in {
   def NOT8r  : I8086Inst<0xF6, MRM2r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),
                          "not\t$dst", [(set GR8:$dst,  (not GR8:$src1))]>;
   def NOT16r : I8086Inst<0xF7, MRM2r, NoImm, (outs GR16:$dst), (ins GR16:$src1),
@@ -499,7 +539,7 @@ def NOT16m : I8086Inst<0xF7, MRM2m, NoImm, (outs), (ins mem16e:$mem), "not\t$mem
 
 // NEG (-x = 0-x): two-address register CodeGen form -- one in-place instruction
 // (2 bytes) that sets FLAGS, versus the `xor r,r; sub r,x` pair otherwise.
-let Constraints = "$src1 = $dst", Defs = [FLAGS] in {
+let AddedComplexity = 30, Constraints = "$src1 = $dst", Defs = [FLAGS] in {
   def NEG8r  : I8086Inst<0xF6, MRM3r, NoImm, (outs GR8:$dst),  (ins GR8:$src1),
                          "neg\t$dst", [(set GR8:$dst,  (ineg GR8:$src1))]>;
   def NEG16r : I8086Inst<0xF7, MRM3r, NoImm, (outs GR16:$dst), (ins GR16:$src1),

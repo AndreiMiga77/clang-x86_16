@@ -12,14 +12,15 @@ target triple = "i8086"
 
 ; mov reg,reg (2 bytes): fetch-bound -> 4 (8086) / 8 (8088).
 ; a [bp+disp] load: EA 9, EU 8+9 = 17 (8086); +4 word-access penalty = 21 (8088).
+; a folded add reg,[bp+disp]: EU 9+9 = 18 (8086); +4 = 22 (8088).
 ; imul is execution-bound (same on both).  add reg,imm16 is 3 bytes.
 ; CHECK-LABEL: costs:
 ; I86: mov bp, sp {{.*}}cost: 4 cyc, 2 B
 ; I88: mov bp, sp {{.*}}cost: 8 cyc, 2 B
 ; I86: mov {{[a-z]+}}, [bp + {{[0-9]+}}] {{.*}}cost: 17 cyc, 3 B
 ; I88: mov {{[a-z]+}}, [bp + {{[0-9]+}}] {{.*}}cost: 21 cyc, 3 B
-; I86: add {{[a-z]+}}, {{[a-z]+}} {{.*}}cost: 4 cyc, 2 B
-; I88: add {{[a-z]+}}, {{[a-z]+}} {{.*}}cost: 8 cyc, 2 B
+; I86: add {{[a-z]+}}, [bp + {{[0-9]+}}] {{.*}}cost: 18 cyc, 3 B
+; I88: add {{[a-z]+}}, [bp + {{[0-9]+}}] {{.*}}cost: 22 cyc, 3 B
 ; CHECK: imul {{[a-z]+}} {{.*}}cost: 141 cyc, 2 B
 ; I86: add {{[a-z]+}}, 5 {{.*}}cost: 8 cyc, 3 B
 ; I88: add {{[a-z]+}}, 5 {{.*}}cost: 12 cyc, 3 B
